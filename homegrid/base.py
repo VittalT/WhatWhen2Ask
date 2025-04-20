@@ -622,6 +622,15 @@ class MiniGridEnv(gym.Env):
         self.height = height
         self.max_steps = max_steps
         self.see_through_walls = see_through_walls
+        self.rooms = [{'name': 'kitchen',
+                  'pos': (np.int64(4), np.int64(8)),
+                  'room': 'K'},
+                  {'name': 'dining room',
+                  'pos': (np.int64(10), np.int64(8)),
+                  'room': 'D'},
+                  {'name': 'living room',
+                  'pos': (np.int64(10), np.int64(3)),
+                  'room': 'L'},]
 
         # Current position and direction of the agent
         self.agent_pos: np.ndarray = None

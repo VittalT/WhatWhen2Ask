@@ -408,4 +408,4 @@ class HomeGridBase(MiniGridEnv):
     draw.text((0, 0), text, (0, 0, 0))
     draw.text((0, 45), "Action: {}".format(self._env.prev_action), (0, 0, 0))
     img = np.asarray(img)
-    return im
+    return img

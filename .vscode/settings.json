@@ -1,0 +1,21 @@
+{
+  "python.envFile": "${workspaceFolder}/.env",
+  "python.defaultInterpreterPath": "/opt/anaconda3/envs/RA_env/bin/python",
+  "terminal.integrated.defaultProfile.osx": "bash",
+  "terminal.integrated.env.osx": {
+    "CONDA_DEFAULT_ENV": "RA_env"
+  },
+
+  // ─── Formatting & Formatting-on-save ───────────────────────────────────────
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter"
+  },
+  "black-formatter.args": ["--line-length", "88"],
+
+  // ─── Python analysis tweaks (optional) ─────────────────────────────────────
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingImports": "none"
+  },
+  "python.analysis.typeCheckingMode": "off"
+}

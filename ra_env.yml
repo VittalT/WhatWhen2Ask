@@ -1,0 +1,22 @@
+name: RA_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - numpy
+  - matplotlib
+  - gym
+  - pytorch
+  - torchvision
+  - torchaudio
+  - tqdm
+  - pillow
+  - requests
+  - pip:
+      - spacy
+      - homegrid
+      - openai
+      - jsonpickle
+      - transformers
