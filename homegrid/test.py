@@ -13,7 +13,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Use a consistent checkpoint directory
-checkpoint_dir = "checkpoints7"
+checkpoint_dir = "checkpoints8"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Create a log directory for tracking metrics
@@ -444,6 +444,119 @@ def evaluate_checkpoints(
     return results
 
 
+def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
+    """
+    Run a quick benchmark to estimate runtime for larger training and testing.
+
+    Args:
+        train_episodes: Small number of episodes to train (default 20)
+        test_episodes: Number of episodes to test (default 100)
+        use_gpu: Whether to use GPU acceleration (if available)
+
+    Returns:
+        Dictionary with benchmark results
+    """
+    print("\n" + "=" * 60)
+    print("RUNNING PERFORMANCE BENCHMARK")
+    print("=" * 60)
+
+    # Initialize a fresh agent for benchmarking
+    benchmark_agent = DQNAgent()
+    if use_gpu and torch.cuda.is_available():
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+        # Warm up the GPU to ensure accurate timing
+        dummy_tensor = torch.ones(1000, 1000, device=device)
+        dummy_result = torch.matmul(dummy_tensor, dummy_tensor)
+        torch.cuda.synchronize()
+    else:
+        print("Using CPU")
+
+    # Clear any cache before starting
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    results = {}
+
+    # Test single episode timing
+    print("\nTiming single episode performance...")
+    single_start = time.time()
+    benchmark_agent.train(episodes=1)
+    single_time = time.time() - single_start
+    results["single_episode_time"] = single_time
+    print(f"Single training episode time: {single_time:.3f} seconds")
+
+    # Training benchmark
+    print(f"\nBenchmarking training for {train_episodes} episodes...")
+    train_start = time.time()
+    benchmark_agent.train(episodes=train_episodes)
+    train_time = time.time() - train_start
+    avg_episode_time = train_time / train_episodes
+    results["train_time"] = train_time
+    results["avg_episode_time"] = avg_episode_time
+
+    print(f"Training completed in {train_time:.2f} seconds")
+    print(f"Average time per episode: {avg_episode_time:.3f} seconds")
+
+    # Testing benchmark
+    print(f"\nBenchmarking testing for {test_episodes} episodes...")
+    test_start = time.time()
+    benchmark_agent.test(episodes=test_episodes)
+    test_time = time.time() - test_start
+    avg_test_time = test_time / test_episodes
+    results["test_time"] = test_time
+    results["avg_test_time"] = avg_test_time
+
+    print(f"Testing completed in {test_time:.2f} seconds")
+    print(f"Average time per test episode: {avg_test_time:.3f} seconds")
+
+    # Extrapolation estimates
+    print("\nExtrapolated runtime estimates:")
+    for ep_count in [100, 500, 1000, 2000, 5000]:
+        est_time = avg_episode_time * ep_count
+        minutes = est_time / 60
+        hours = minutes / 60
+
+        print(
+            f"  • {ep_count} episodes: {est_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr)"
+        )
+
+    # Test episodes extrapolation
+    print("\nExtrapolated test runtime estimates:")
+    for test_count in [500, 1000, 5000, 10000]:
+        est_time = avg_test_time * test_count
+        minutes = est_time / 60
+
+        print(f"  • {test_count} test episodes: {est_time:.1f} sec ({minutes:.1f} min)")
+
+    # Save results
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    benchmark_file = os.path.join(log_dir, f"benchmark_results_{timestamp}.json")
+
+    # Include hardware info
+    hw_info = {
+        "device": str(device),
+        "cpu_count": multiprocessing.cpu_count(),
+        "timestamp": timestamp,
+    }
+
+    if torch.cuda.is_available():
+        hw_info["gpu"] = torch.cuda.get_device_name(0)
+        hw_info["cuda_version"] = torch.version.cuda
+        hw_info["gpu_memory_gb"] = (
+            torch.cuda.get_device_properties(0).total_memory / 1e9
+        )
+
+    results["hardware_info"] = hw_info
+
+    with open(benchmark_file, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print("\nBenchmark results saved to:", benchmark_file)
+    print("=" * 60)
+
+    return results
+
+
 if __name__ == "__main__":
     # Print GPU information if available
     if torch.cuda.is_available():
@@ -457,6 +570,16 @@ if __name__ == "__main__":
     else:
         print("\nNo GPU available - will use CPU for training and evaluation")
 
+    """
+    # Run the performance benchmark to estimate training and testing time
+    benchmark_performance(
+        train_episodes=20,  # Quick training benchmark with 20 episodes
+        test_episodes=100,  # Test benchmark with 100 episodes
+        use_gpu=True,  # Use GPU if available
+    )
+    """
+
+    """
     # OPTION 1: Train a new agent from scratch with GPU acceleration
     # Highly recommended for sparse reward environments
     train_agent(
@@ -469,6 +592,7 @@ if __name__ == "__main__":
         num_episodes=1000,  # Number of test episodes
         use_gpu=True,  # Use GPU for faster testing
     )
+    """
 
     # OPTION 2: Continue training from a previous checkpoint
     # Uncomment to use:
@@ -479,22 +603,32 @@ if __name__ == "__main__":
         save_interval=100,          # Save checkpoints every 100 episodes
         use_gpu=True                # Use GPU acceleration
     )
+    
     test_agent(
-        checkpoint="final",         # Test the final model after continued training
-        num_episodes=1000,          # Test on 1000 episodes
-        use_gpu=True                # Use GPU for faster testing
+        checkpoint="final",  # Test the final model after continued training
+        num_episodes=100,  # Test on 1000 episodes
+        use_gpu=True,  # Use GPU for faster testing
     )
     """
 
     # OPTION 3: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
-    """
-    evaluate_checkpoints(
-        checkpoint_range=(100, 2000, 200),  # Test models from episode 100 to 2000, every 200 episodes
-        test_episodes=200,                   # Test each checkpoint on 200 episodes
-        use_gpu=True                         # Use GPU for faster evaluation
+
+    train_agent(
+        num_episodes=10000,  # Train on 10K episodes
+        save_interval=500,  # Save checkpoints every 500 episodes
+        use_gpu=True,  # Use GPU acceleration
     )
-    """
+
+    evaluate_checkpoints(
+        checkpoint_range=(
+            1000,
+            10000,
+            1000,
+        ),  # Test models from episode 1K to 10K, every 1K episodes
+        test_episodes=10000,  # Test each checkpoint on 10K episodes
+        use_gpu=True,  # Use GPU for faster evaluation
+    )
 
     # OPTION 4: Quick test of a specific checkpoint
     # Uncomment to use:

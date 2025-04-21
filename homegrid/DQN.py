@@ -181,7 +181,7 @@ class DQNAgent:
         # Checkpoint interval (save model every N episodes)
         self.checkpoint_interval = 250
         # Directory to save checkpoints
-        self.checkpoint_dir = "checkpoints7"
+        self.checkpoint_dir = "checkpoints8"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Performance tracking
@@ -668,8 +668,8 @@ class DQNAgent:
                     "priorities": deque(maxlen=self.max_replay_buffer_size),
                 }
 
-            # Verbose logging every 50 episodes or as needed
-            verbose = episode % 50 == 0
+            # Verbose logging every 500 episodes or as needed
+            verbose = episode % 500 == 0
             if verbose:
                 print(f"\nEpisode {episode + 1}/{episodes}, Task: {task_id}")
                 print(f"Current epsilon: {self.epsilon:.3f}")
@@ -725,7 +725,7 @@ class DQNAgent:
             rewards_history.append(total_reward)
 
             # Log less frequently to speed up training
-            if (episode + 1) % 10 == 0:
+            if (episode + 1) % 100 == 0:
                 recent_rewards = rewards_history[-min(10, len(rewards_history)) :]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
                 print(
@@ -854,7 +854,7 @@ class DQNAgent:
                 success_count += 1
 
             # Log progress periodically
-            if episode % 100 == 0 or episode == episodes - 1:
+            if episode % 1000 == 0 or episode == episodes - 1:
                 success_rate = success_count / (episode + 1) * 100
                 print(
                     f"Test Episode {episode+1}/{episodes}, "
