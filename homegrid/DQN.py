@@ -119,7 +119,11 @@ class DQN(nn.Module):
 
 class DQNAgent:
     def __init__(self, env_name="homegrid-task", episodes=500):
-        # Initialize environment and hyperparameters.
+        # Check if CUDA is available and set the device
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+
+        # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
         self.alpha = 0.0005  # Lower learning rate for more stable learning
         self.gamma = 0.99
@@ -159,17 +163,18 @@ class DQNAgent:
         # Number of actions from environment.
         self.output_dim = self.env.action_space.n
 
-        # The context vector will be 1204-dimensional in total:
-        # 300 for task + 4 for direction + 300 for carrying + 300 for front object + 300 for hint.
-        self.model = DQN(self.obs_shape, self.output_dim)
-        self.target_model = DQN(self.obs_shape, self.output_dim)
+        # Initialize models and move them to the appropriate device
+        self.model = DQN(self.obs_shape, self.output_dim).to(self.device)
+        self.target_model = DQN(self.obs_shape, self.output_dim).to(self.device)
         self.update_target_network()
+
+        # Optimizer with GPU support
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.alpha)
         self.loss_fn = nn.MSELoss(
             reduction="none"
         )  # Changed to 'none' for prioritized replay
 
-        # Initialize LLMHelper (assumed implemented in BLIP2Helper).
+        # Initialize LLMHelper (assumed implemented in BLIP2Helper)
         self.llm_helper = BLIP2Helper()
         self.hint_threshold = 0.95
 
@@ -188,14 +193,16 @@ class DQNAgent:
             "env_name": env_name,
             "obs_shape": self.obs_shape,
             "action_space": self.output_dim,
+            "device": str(self.device),
         }
 
     def encode_str(self, text, encode_context=True):
         """
-        Convert a string to a 300-dimensional FastText embedding.
+        Convert a string to a 300-dimensional FastText embedding and move to device.
         """
         if encode_context:
-            return get_fasttext_embedding(text).unsqueeze(0)
+            # Get embedding and move to GPU if available
+            return get_fasttext_embedding(text).unsqueeze(0).to(self.device)
         else:
             return text if text != "" else "none"
 
@@ -203,7 +210,7 @@ class DQNAgent:
         """
         Preprocess the state by concatenating the observation with context features.
         The context is arranged as:
-            [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
+          [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
         """
         if not hint:
             hint = self.current_hint
@@ -216,16 +223,25 @@ class DQNAgent:
         hint_str = hint
 
         if encode_context:
+            # Create observation tensor and move to device
             observation = (
-                torch.FloatTensor(obs["image"] / 255.0).permute(2, 0, 1).unsqueeze(0)
+                torch.FloatTensor(obs["image"] / 255.0)
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .to(self.device)
             )
+
+            # Create embeddings and context vectors on the device
             task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
-            direction_one_hot = torch.zeros(1, 4)
+
+            direction_one_hot = torch.zeros(1, 4, device=self.device)
             direction_one_hot[0, direction_int] = 1.0
+
             carrying_embed = self.encode_str(carrying_str, encode_context)  # (1, 300)
             front_obj_embed = self.encode_str(front_obj_str, encode_context)  # (1, 300)
             hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
-            # Concatenate with task embedding at the start.
+
+            # Concatenate with task embedding at the start
             context = torch.cat(
                 [
                     task_embed,
@@ -237,7 +253,7 @@ class DQNAgent:
                 dim=1,
             )
         else:
-            # For non-encoded context, return a JSON string (for visualization if needed).
+            # For non-encoded context, return a JSON string (for visualization if needed)
             observation = Image.fromarray(obs["image"])
             context_dict = {
                 "task": task_str,
@@ -247,21 +263,27 @@ class DQNAgent:
                 "hint": hint_str,
             }
             context = json.dumps(context_dict)
+
         return observation, context
 
     def uncertainty_score(self, state):
         """
         Compute uncertainty based on the entropy of the softmax over Q-values.
         Assumes 'state' is a tuple (observation, context).
+        Uses GPU for computation then transfers back to CPU for numpy operations.
         """
         observation, context = state
         with torch.no_grad():
             q_values = self.model(observation, context)
+            # Move to CPU for numpy operations
             q_values = q_values.squeeze(0).cpu().numpy()
+
+        # Compute entropy (on CPU with numpy)
         q_values = q_values - np.max(q_values)  # for numerical stability
         probabilities = np.exp(q_values) / np.sum(np.exp(q_values))
         entropy = -np.sum(probabilities * np.log(probabilities + 1e-9))
         max_entropy = np.log(len(q_values))
+
         return entropy / max_entropy
 
     def compute_distance(self, info):
@@ -420,9 +442,12 @@ class DQNAgent:
         """
         Choose an action using an epsilon-greedy strategy.
         If uncertainty is high and LLM calls are allowed, query the LLM.
+        Uses GPU for tensor operations.
         """
         uncertainty = self.uncertainty_score(state)
         cost = 0
+
+        # Check if we should use LLM hints
         if (
             uncertainty > self.hint_threshold
             and self.num_llm_calls < self.max_llm_calls
@@ -438,11 +463,17 @@ class DQNAgent:
             )
             self.current_hint = hint
             state = self.preprocess_state(obs, info)
+
+        # Epsilon-greedy action selection
         if random.random() < self.epsilon:
             return self.env.action_space.sample(), cost, state
+
+        # Greedy action selection using GPU
         with torch.no_grad():
             q_values = self.model(state[0], state[1])
-        action = torch.argmax(q_values).item()
+            # Use tensor operations on GPU, only get final action as a CPU item
+            action = torch.argmax(q_values, dim=1).item()
+
         return action, cost, state
 
     def update_target_network(self):
@@ -558,18 +589,19 @@ class DQNAgent:
 
         states, actions, rewards, next_states, dones = zip(*batch)
 
+        # Move all tensors to the device (GPU)
         observation_batch = torch.cat([s[0] for s in states], dim=0)
         context_batch = torch.cat([s[1] for s in states], dim=0)
         next_observation_batch = torch.cat([s[0] for s in next_states], dim=0)
         next_context_batch = torch.cat([s[1] for s in next_states], dim=0)
 
-        actions = torch.LongTensor(actions).unsqueeze(1)
-        rewards = torch.FloatTensor(rewards)
-        dones = torch.FloatTensor(dones)
+        actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
+        rewards = torch.FloatTensor(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
 
         # Convert importance sampling weights to tensor if using PER
         if weights is not None:
-            weights = torch.FloatTensor(weights)
+            weights = torch.FloatTensor(weights).to(self.device)
 
         with torch.no_grad():
             next_q_values = self.target_model(
@@ -602,7 +634,7 @@ class DQNAgent:
 
         # Update priorities in replay buffer if using PER
         if self.use_per and indices is not None:
-            # Get TD errors as numpy array
+            # Get TD errors as numpy array - move back to CPU for numpy operations
             td_errors_np = td_errors.detach().cpu().numpy()
             self.update_priorities(task_id, indices, td_errors_np)
 
