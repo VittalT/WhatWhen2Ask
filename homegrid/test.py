@@ -117,6 +117,7 @@ def train_agent(
     save_interval=100,
     use_gpu=True,
     memory_efficient=True,
+    max_mem_gb=None,
 ):
     """
     Train an agent from scratch or continue training from a checkpoint,
@@ -128,6 +129,7 @@ def train_agent(
         save_interval: How often to save checkpoints (in episodes)
         use_gpu: Whether to use GPU acceleration (if available)
         memory_efficient: Whether to use memory optimization techniques
+        max_mem_gb: Maximum GPU memory to use in GB (None = no limit)
     """
     # Record start time
     start_time = time.time()
@@ -142,20 +144,57 @@ def train_agent(
 
         # Initialize memory monitor if memory_efficient is True
         if memory_efficient:
-            mem_monitor = memory_monitor(interval=600)  # Check memory every 10 minutes
+            mem_monitor = memory_monitor(interval=300)  # Check memory every 5 minutes
+
+            # Set memory budget if provided
+            if max_mem_gb is not None:
+                print(f"Training with memory budget of {max_mem_gb}GB")
+                available_mem = torch.cuda.get_device_properties(0).total_memory / (
+                    1024**3
+                )
+                if max_mem_gb > available_mem:
+                    print(
+                        f"Warning: Requested memory budget ({max_mem_gb}GB) exceeds available GPU memory ({available_mem:.1f}GB)"
+                    )
+                    max_mem_gb = (
+                        available_mem * 0.9
+                    )  # Use 90% of available memory as safety
 
     # Load agent, continuing from checkpoint if specified
     agent = load_agent(continue_from, use_gpu=use_gpu)
     agent.checkpoint_interval = save_interval  # Set custom checkpoint interval
 
-    # Optimize batch size for GPU
+    # Optimize batch size for GPU and enforce small batch sizes for memory efficiency
     if use_gpu and torch.cuda.is_available():
         original_batch_size = agent.batch_size
-        # Increase batch size for better GPU utilization, unless memory_efficient is True
-        if not memory_efficient:
+
+        # If memory_efficient is True, use even smaller batch sizes
+        if memory_efficient:
+            # Further reduce batch size when in memory efficient mode
+            agent.batch_size = min(
+                32, original_batch_size
+            )  # Cap at 32 regardless of GPU
+
+            # Set even smaller batch size if memory budget is very restricted
+            if max_mem_gb is not None and max_mem_gb < 8:
+                agent.batch_size = 16  # Use tiny batch size for very limited memory
+
+            print(
+                f"Memory-efficient mode: Using smaller batch size of {agent.batch_size}"
+            )
+        else:
+            # Standard batch size increase for normal mode
             agent.batch_size = original_batch_size * batch_size_multiplier
             print(
                 f"GPU detected: Increasing batch size from {original_batch_size} to {agent.batch_size}"
+            )
+
+        # Reduce replay buffer size if memory budget is constrained
+        if max_mem_gb is not None and max_mem_gb < 12:
+            orig_buffer = agent.max_replay_buffer_size
+            agent.max_replay_buffer_size = min(2000, agent.max_replay_buffer_size)
+            print(
+                f"Reducing replay buffer size from {orig_buffer} to {agent.max_replay_buffer_size} to fit memory budget"
             )
 
     # Log training metadata with hardware info
@@ -179,6 +218,7 @@ def train_agent(
         "epsilon_decay": agent.epsilon_decay,
         "worker_threads": num_workers,
         "memory_efficient": memory_efficient,
+        "memory_budget_gb": max_mem_gb,
     }
 
     # Save metadata
@@ -203,10 +243,14 @@ def train_agent(
 
     # Define batch size for training in smaller chunks to manage memory
     # For very long training runs, process in batches to allow for periodic cleanup
-    if memory_efficient and num_episodes > 500:
-        batch_episodes = 500  # Train in batches of 500 episodes
+    if memory_efficient:
+        # Use smaller batch size when memory budget is restricted
+        if max_mem_gb is not None and max_mem_gb < 12:
+            batch_episodes = 100  # Very small chunks for low memory
+        else:
+            batch_episodes = 250  # Smaller batches in memory-efficient mode
     else:
-        batch_episodes = num_episodes
+        batch_episodes = num_episodes  # All at once if not memory_efficient
 
     try:
         episodes_completed = 0
@@ -219,11 +263,7 @@ def train_agent(
             episodes_completed += current_batch
 
             # Periodically log memory usage if in memory efficient mode
-            if (
-                memory_efficient
-                and torch.cuda.is_available()
-                and time.time() - last_mem_check > 300
-            ):
+            if memory_efficient and torch.cuda.is_available():
                 current_mem, peak_mem = mem_monitor()
                 memory_data.append(
                     {
@@ -234,11 +274,39 @@ def train_agent(
                 )
                 last_mem_check = time.time()
 
-                # Force cleanup if memory is getting high
-                if current_mem > 20:  # GB
-                    print("Memory usage high - performing additional cleanup")
+                # Check if we're exceeding our memory budget
+                if (
+                    max_mem_gb is not None and current_mem > max_mem_gb * 0.9
+                ):  # Within 90% of budget
+                    print(
+                        f"WARNING: Approaching memory budget ({current_mem:.2f}GB / {max_mem_gb}GB)"
+                    )
+                    print("Performing aggressive memory cleanup")
+
+                    # Force extensive cleanup
                     torch.cuda.empty_cache()
                     gc.collect()
+
+                    # If still above 95% of budget after cleanup, reduce batch size
+                    current_mem, _ = mem_monitor()
+                    if current_mem > max_mem_gb * 0.95:
+                        old_batch = agent.batch_size
+                        agent.batch_size = max(
+                            8, agent.batch_size // 2
+                        )  # Reduce batch size but minimum of 8
+                        print(
+                            f"Memory pressure high: Reducing batch size from {old_batch} to {agent.batch_size}"
+                        )
+
+                        # If we're still using too much memory, save and exit
+                        if current_mem > max_mem_gb * 0.98:
+                            print(
+                                f"CRITICAL: Memory usage ({current_mem:.2f}GB) almost at budget ({max_mem_gb}GB)"
+                            )
+                            print(
+                                "Saving checkpoint and exiting early to prevent out-of-memory error"
+                            )
+                            break
 
             print(f"Completed {episodes_completed}/{num_episodes} episodes")
 
@@ -246,6 +314,9 @@ def train_agent(
             if memory_efficient and torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 gc.collect()
+
+                # Sleep briefly to ensure cleanup completes
+                time.sleep(1)
 
     except Exception as e:
         print(f"Training interrupted: {str(e)}")
@@ -262,6 +333,7 @@ def train_agent(
             "total_steps": agent.total_steps,
             "metadata": metadata,
             "memory_data": memory_data if memory_efficient else [],
+            "episodes_completed": episodes_completed,
         },
         final_path,
     )
@@ -273,8 +345,13 @@ def train_agent(
     time_per_episode = training_time / max(1, episodes_completed)
 
     print("\n" + "=" * 50)
-    print("TRAINING COMPLETED")
+    print(
+        "TRAINING COMPLETED"
+        if episodes_completed >= num_episodes
+        else "TRAINING PARTIALLY COMPLETED"
+    )
     print("=" * 50)
+    print(f"Episodes completed: {episodes_completed}/{num_episodes}")
     print(f"Total time: {training_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr)")
     print(f"Time per episode: {time_per_episode:.2f} sec")
     print(f"Final model saved to: {final_path}")
@@ -795,16 +872,26 @@ if __name__ == "__main__":
 
     # Check if there might be memory issues
     memory_warning = False
+    memory_limit_gb = None
     if (
         torch.cuda.is_available()
         and "memory_increase_per_episode_mb" in benchmark_results
     ):
         increase_per_ep_mb = benchmark_results["memory_increase_per_episode_mb"]
+        gpu_total_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
+
+        # Set a memory budget based on the leak rate and total training episodes
         if increase_per_ep_mb > 1.0:  # More than 1MB increase per episode
             memory_warning = True
             print("\n⚠️ WARNING: Potential memory leak detected in benchmark")
             print(f"Memory increase per episode: {increase_per_ep_mb:.2f}MB")
             print("Training will proceed in memory-efficient mode")
+
+            # Calculate safe memory limit (75% of available memory)
+            memory_limit_gb = min(18, gpu_total_mem * 0.75)
+            print(
+                f"Setting memory budget to {memory_limit_gb:.1f}GB (75% of available {gpu_total_mem:.1f}GB)"
+            )
         else:
             print("\n✓ Memory usage looks stable, proceeding with normal training")
 
@@ -816,13 +903,40 @@ if __name__ == "__main__":
     if choice == "y" or choice == "yes":
         print("\nStarting training with memory optimization...")
 
+        # Ask for the number of episodes
+        try:
+            num_episodes = int(
+                input("How many episodes do you want to train for? [default=2000]: ")
+                or "2000"
+            )
+        except ValueError:
+            num_episodes = 2000
+            print(f"Invalid input, using default of {num_episodes} episodes")
+
+        # Based on the analysis of the training curve (learning_curve_8500.png),
+        # meaningful learning happens within 2000-3000 episodes
+        if num_episodes > 3000:
+            print(
+                f"Note: Based on learning curves, meaningful learning typically occurs within 2000-3000 episodes"
+            )
+            confirm = (
+                input(
+                    f"Do you still want to train for {num_episodes} episodes? (y/n): "
+                )
+                .strip()
+                .lower()
+            )
+            if confirm != "y" and confirm != "yes":
+                num_episodes = 3000
+                print(f"Limiting training to {num_episodes} episodes")
+
         # Train the agent with memory efficiency if there was a warning
         train_agent(
-            num_episodes=10000,  # Long training run
-            save_interval=500,  # Save checkpoints every 500 episodes
+            num_episodes=num_episodes,  # User-specified number of episodes
+            save_interval=250,  # Save checkpoints regularly
             use_gpu=True,  # Use GPU acceleration
-            memory_efficient=memory_warning
-            or True,  # Force memory efficiency mode if warning or explicitly set
+            memory_efficient=True,  # Always use memory efficiency
+            max_mem_gb=memory_limit_gb,  # Set memory budget if leak was detected
         )
 
         # Test the best model
@@ -841,4 +955,4 @@ if __name__ == "__main__":
         print("2. Reduce max_replay_buffer_size in DQNAgent.__init__")
         print("3. Set memory_efficient=True in train_agent()")
         print("4. Train in smaller episode batches")
-        print("5. Run benchmark_performance() to identify memory issues")
+        print("5. Use the max_mem_gb parameter to set a memory budget")

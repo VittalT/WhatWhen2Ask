@@ -21,8 +21,24 @@ EMBED_DIM = nlp("hello").vector.shape[0]  # 300
 def get_fasttext_embedding(text):
     """
     Convert a text (word or phrase) to a 300-dimensional FastText embedding.
+    Includes error handling for text processing.
     """
-    return torch.tensor(nlp(text).vector, dtype=torch.float32)
+    try:
+        if not isinstance(text, str):
+            # Convert to string if not already
+            text = str(text) if text is not None else ""
+
+        # Handle empty text
+        if not text.strip():
+            text = "none"
+
+        # Get embedding from spaCy
+        vector = nlp(text).vector
+        return torch.tensor(vector, dtype=torch.float32)
+    except Exception as e:
+        print(f"Error generating embedding for '{text}': {e}")
+        # Return zero vector as fallback
+        return torch.zeros(EMBED_DIM, dtype=torch.float32)
 
 
 def visualize_image(image):
@@ -137,17 +153,17 @@ class DQNAgent:
 
             # Scale batch size based on available memory
             if gpu_mem_gb > 20:  # High-end GPU
-                self.batch_size = 128
+                self.batch_size = 64  # Reduced from 128
             elif gpu_mem_gb > 10:  # Mid-range GPU
-                self.batch_size = 96
+                self.batch_size = 48  # Reduced from 96
             elif gpu_mem_gb > 6:  # Lower-end GPU
-                self.batch_size = 64
+                self.batch_size = 32  # Reduced from 64
             else:  # Very limited GPU memory
-                self.batch_size = 32
+                self.batch_size = 16  # Reduced from 32
 
             print(f"Using batch size: {self.batch_size}")
         else:
-            self.batch_size = 128  # CPU default
+            self.batch_size = 64  # CPU default
 
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
@@ -164,13 +180,15 @@ class DQNAgent:
         # Memory parameters - reduce buffer size to save memory
         self.replay_buffer = {}
         # Memory optimization: Scale buffer size based on available memory
-        if (
-            torch.cuda.is_available()
-            and torch.cuda.get_device_properties(0).total_memory / (1024**3) < 12
-        ):
-            self.max_replay_buffer_size = 5000  # Smaller buffer for limited memory
+        if torch.cuda.is_available():
+            if torch.cuda.get_device_properties(0).total_memory / (1024**3) < 12:
+                self.max_replay_buffer_size = (
+                    2000  # Much smaller buffer for limited memory
+                )
+            else:
+                self.max_replay_buffer_size = 4000  # Reduced from 5000/10000
         else:
-            self.max_replay_buffer_size = 10000  # Standard size
+            self.max_replay_buffer_size = 5000  # Standard size for CPU
 
         print(f"Using replay buffer size: {self.max_replay_buffer_size}")
 
@@ -237,10 +255,30 @@ class DQNAgent:
     def encode_str(self, text, encode_context=True):
         """
         Convert a string to a 300-dimensional FastText embedding and move to device.
+        Includes robust error handling.
         """
         if encode_context:
-            # Get embedding and move to GPU if available
-            return get_fasttext_embedding(text).unsqueeze(0).to(self.device)
+            try:
+                # Handle invalid input
+                if not isinstance(text, str) or not text:
+                    text = "none"
+
+                # Get embedding and move to GPU if available - handle errors
+                embedding = get_fasttext_embedding(text)
+
+                # Only perform device transfer if needed
+                if embedding.device != self.device:
+                    embedding = embedding.to(self.device)
+
+                # Add batch dimension if needed
+                if embedding.dim() == 1:
+                    embedding = embedding.unsqueeze(0)
+
+                return embedding
+            except Exception as e:
+                print(f"Error in encode_str for '{text}': {e}")
+                # Fallback to zeros on the correct device
+                return torch.zeros(1, EMBED_DIM, device=self.device)
         else:
             return text if text != "" else "none"
 
@@ -263,44 +301,99 @@ class DQNAgent:
         hint_str = hint
 
         if encode_context:
-            # Create observation tensor and move to device - normalize in-place where possible
-            # Convert to float32 to save memory (instead of float64)
-            obs_array = obs["image"] / 255.0
-            observation = (
-                torch.FloatTensor(obs_array)
-                .permute(2, 0, 1)
-                .unsqueeze(0)
-                .to(self.device)
-            )
+            try:
+                # Create observation tensor and move to device - normalize in-place where possible
+                # Convert to float32 to save memory (instead of float64)
+                obs_array = obs["image"] / 255.0
+                observation = (
+                    torch.FloatTensor(obs_array)
+                    .permute(2, 0, 1)
+                    .unsqueeze(0)
+                    .to(self.device)
+                )
 
-            # Get embeddings using context-specific methods to save memory
-            task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
+                # Get embeddings using context-specific methods to save memory
+                task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
 
-            # Create direction one-hot directly on device to avoid CPU->GPU transfer
-            direction_one_hot = torch.zeros(1, 4, device=self.device)
-            direction_one_hot[0, direction_int] = 1.0
+                # Create direction one-hot directly on device to avoid CPU->GPU transfer
+                direction_one_hot = torch.zeros(1, 4, device=self.device)
+                direction_one_hot[0, direction_int] = 1.0
 
-            # Encode other embeddings
-            carrying_embed = self.encode_str(carrying_str, encode_context)  # (1, 300)
-            front_obj_embed = self.encode_str(front_obj_str, encode_context)  # (1, 300)
-            hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
+                # Encode other embeddings
+                carrying_embed = self.encode_str(
+                    carrying_str, encode_context
+                )  # (1, 300)
+                front_obj_embed = self.encode_str(
+                    front_obj_str, encode_context
+                )  # (1, 300)
+                hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
 
-            # Concatenate with task embedding at the start - do this once to avoid multiple concatenations
-            context = torch.cat(
-                [
-                    task_embed,
-                    direction_one_hot,
-                    carrying_embed,
-                    front_obj_embed,
-                    hint_embed,
-                ],
-                dim=1,
-            )
+                # Concatenate with task embedding at the start - do this once to avoid multiple concatenations
+                context = torch.cat(
+                    [
+                        task_embed,
+                        direction_one_hot,
+                        carrying_embed,
+                        front_obj_embed,
+                        hint_embed,
+                    ],
+                    dim=1,
+                )
 
-            # Optional memory cleanup for large tensors
-            del task_embed, carrying_embed, front_obj_embed, hint_embed
+                # Optional memory cleanup for large tensors
+                del task_embed, carrying_embed, front_obj_embed, hint_embed
 
-            return observation, context
+                return observation, context
+
+            except RuntimeError as e:
+                print(f"Error in preprocess_state: {e}")
+                print("Falling back to alternative preprocessing method")
+                # Alternative approach if the normal method fails
+                # This can happen when there are device mismatches
+                try:
+                    obs_array = obs["image"] / 255.0
+                    observation = (
+                        torch.FloatTensor(obs_array).permute(2, 0, 1).unsqueeze(0)
+                    )
+                    observation = observation.to(self.device)
+
+                    task_embed = (
+                        get_fasttext_embedding(task_str).unsqueeze(0).to(self.device)
+                    )
+
+                    direction_one_hot = torch.zeros(1, 4).to(self.device)
+                    direction_one_hot[0, direction_int] = 1.0
+
+                    carrying_embed = (
+                        get_fasttext_embedding(carrying_str)
+                        .unsqueeze(0)
+                        .to(self.device)
+                    )
+                    front_obj_embed = (
+                        get_fasttext_embedding(front_obj_str)
+                        .unsqueeze(0)
+                        .to(self.device)
+                    )
+                    hint_embed = (
+                        get_fasttext_embedding(hint_str).unsqueeze(0).to(self.device)
+                    )
+
+                    context = torch.cat(
+                        [
+                            task_embed,
+                            direction_one_hot,
+                            carrying_embed,
+                            front_obj_embed,
+                            hint_embed,
+                        ],
+                        dim=1,
+                    ).to(self.device)
+
+                    return observation, context
+
+                except Exception as e2:
+                    print(f"Alternative method also failed: {e2}")
+                    raise e2
         else:
             # For non-encoded context, return a JSON string (for visualization if needed)
             observation = Image.fromarray(obs["image"])
@@ -550,7 +643,75 @@ class DQNAgent:
             priority = (abs(error) + self.per_epsilon) ** self.per_alpha
             self.replay_buffer[task_id]["priorities"].append(priority)
 
-        self.replay_buffer[task_id]["experiences"].append(experience)
+        # Deep copy state components to prevent memory leaks from tensor references
+        state, action, reward, next_state, terminated = experience
+
+        # Only keep the necessary data - detach tensors and move to CPU
+        if isinstance(state, tuple) and len(state) == 2:
+            # Original state is (observation, context) tuple
+            # Move tensors to CPU and detach - handle non-tensor objects safely
+            if torch.is_tensor(state[0]):
+                # First check if tensor is already on CPU to avoid unnecessary transfers
+                if state[0].device.type != "cpu":
+                    obs_cpu = state[0].detach().cpu()
+                else:
+                    obs_cpu = state[0].detach()  # Already on CPU, just detach
+            else:
+                obs_cpu = state[0]  # Not a tensor, keep as is
+
+            if torch.is_tensor(state[1]):
+                if state[1].device.type != "cpu":
+                    context_cpu = state[1].detach().cpu()
+                else:
+                    context_cpu = state[1].detach()
+            else:
+                context_cpu = state[1]
+
+            state_cpu = (obs_cpu, context_cpu)
+        else:
+            state_cpu = state
+
+        if isinstance(next_state, tuple) and len(next_state) == 2:
+            # Original next_state is (observation, context) tuple
+            # Move tensors to CPU and detach
+            if torch.is_tensor(next_state[0]):
+                if next_state[0].device.type != "cpu":
+                    next_obs_cpu = next_state[0].detach().cpu()
+                else:
+                    next_obs_cpu = next_state[0].detach()
+            else:
+                next_obs_cpu = next_state[0]
+
+            if torch.is_tensor(next_state[1]):
+                if next_state[1].device.type != "cpu":
+                    next_context_cpu = next_state[1].detach().cpu()
+                else:
+                    next_context_cpu = next_state[1].detach()
+            else:
+                next_context_cpu = next_state[1]
+
+            next_state_cpu = (next_obs_cpu, next_context_cpu)
+        else:
+            next_state_cpu = next_state
+
+        # Create new experience tuple with CPU tensors
+        cpu_experience = [state_cpu, action, reward, next_state_cpu, terminated]
+
+        self.replay_buffer[task_id]["experiences"].append(cpu_experience)
+
+        # Memory management: limit the number of tasks in replay buffer
+        if len(self.replay_buffer) > 10:  # Limit to most recent 10 tasks
+            oldest_task = next(iter(self.replay_buffer))
+            if oldest_task != task_id:
+                del self.replay_buffer[oldest_task]
+                print(
+                    f"Removed oldest task {oldest_task} from replay buffer to save memory"
+                )
+
+        # Periodically force garbage collection to free unused memory
+        if self.total_steps % 1000 == 0:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
 
     def sample_batch(self, task_id):
         """Sample a batch of experiences using prioritized experience replay with error handling"""
@@ -639,10 +800,64 @@ class DQNAgent:
         states, actions, rewards, next_states, dones = zip(*batch)
 
         # Move all tensors to the device (GPU)
-        observation_batch = torch.cat([s[0] for s in states], dim=0)
-        context_batch = torch.cat([s[1] for s in states], dim=0)
-        next_observation_batch = torch.cat([s[0] for s in next_states], dim=0)
-        next_context_batch = torch.cat([s[1] for s in next_states], dim=0)
+        # Handle CPU stored tensors by explicitly moving them to the device
+        try:
+            observation_batch = torch.cat([s[0].to(self.device) for s in states], dim=0)
+            context_batch = torch.cat([s[1].to(self.device) for s in states], dim=0)
+            next_observation_batch = torch.cat(
+                [s[0].to(self.device) for s in next_states], dim=0
+            )
+            next_context_batch = torch.cat(
+                [s[1].to(self.device) for s in next_states], dim=0
+            )
+        except RuntimeError as e:
+            print(f"Tensor device error: {e}")
+            print("Attempting alternative tensor loading approach...")
+            # Alternative approach for handling different tensor types
+            observation_batch = torch.cat(
+                [
+                    (
+                        s[0].detach().to(self.device)
+                        if torch.is_tensor(s[0])
+                        else torch.tensor(s[0], device=self.device)
+                    )
+                    for s in states
+                ],
+                dim=0,
+            )
+            context_batch = torch.cat(
+                [
+                    (
+                        s[1].detach().to(self.device)
+                        if torch.is_tensor(s[1])
+                        else torch.tensor(s[1], device=self.device)
+                    )
+                    for s in states
+                ],
+                dim=0,
+            )
+            next_observation_batch = torch.cat(
+                [
+                    (
+                        s[0].detach().to(self.device)
+                        if torch.is_tensor(s[0])
+                        else torch.tensor(s[0], device=self.device)
+                    )
+                    for s in next_states
+                ],
+                dim=0,
+            )
+            next_context_batch = torch.cat(
+                [
+                    (
+                        s[1].detach().to(self.device)
+                        if torch.is_tensor(s[1])
+                        else torch.tensor(s[1], device=self.device)
+                    )
+                    for s in next_states
+                ],
+                dim=0,
+            )
 
         actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
@@ -725,7 +940,9 @@ class DQNAgent:
         no_improvement_count = 0
 
         # Memory management: Add periodic memory cleanup counter
-        memory_cleanup_freq = 10  # Clean memory every N episodes
+        memory_cleanup_freq = 5  # Clean memory every N episodes (reduced from 10)
+        # Clean up replay buffer more frequently
+        replay_buffer_cleanup_freq = 100  # Clean up old tasks every N episodes
 
         try:
             for episode in range(episodes):
@@ -777,7 +994,10 @@ class DQNAgent:
                     transition = [state, action, reward, next_state, terminated]
                     self.add_experience(task_id, transition)
 
+                    # Clear state reference to avoid memory leak
+                    del state
                     state = next_state
+
                     total_reward += reward
 
                     # Train less frequently to speed up training (every 4 steps)
@@ -902,6 +1122,30 @@ class DQNAgent:
                         print(
                             f"  GPU Memory: Current={allocated:.1f}MB, Peak={max_allocated:.1f}MB, Reserved={reserved:.1f}MB"
                         )
+
+                # Clean up replay buffer for old tasks periodically
+                if episode % replay_buffer_cleanup_freq == 0 and episode > 0:
+                    # Keep only the current task and at most 4 previous tasks
+                    if len(self.replay_buffer) > 5:
+                        current_tasks = list(self.replay_buffer.keys())
+                        tasks_to_keep = [task_id]  # Always keep current task
+
+                        # Add up to 4 most recent other tasks
+                        other_tasks = [t for t in current_tasks if t != task_id]
+                        tasks_to_keep.extend(other_tasks[-4:])
+
+                        # Remove old tasks
+                        for t in list(self.replay_buffer.keys()):
+                            if t not in tasks_to_keep:
+                                del self.replay_buffer[t]
+
+                        if verbose:
+                            print(
+                                f"  Cleaned replay buffer: keeping {len(tasks_to_keep)} tasks, removed {len(current_tasks) - len(tasks_to_keep)} old tasks"
+                            )
+                            print(
+                                f"  Current replay buffer size: {sum(len(self.replay_buffer[t]['experiences']) for t in self.replay_buffer)} experiences"
+                            )
 
         except Exception as e:
             print(f"Training interrupted: {e}")
