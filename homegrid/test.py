@@ -7,14 +7,13 @@ import json
 import time
 import multiprocessing
 from datetime import datetime
-import gc
 
 # Check for GPU availability
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Use a consistent checkpoint directory
-checkpoint_dir = "checkpoints8"
+checkpoint_dir = "checkpoints9"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Create a log directory for tracking metrics
@@ -111,25 +110,16 @@ def load_agent(
     return agent
 
 
-def train_agent(
-    num_episodes=1000,
-    continue_from=None,
-    save_interval=100,
-    use_gpu=True,
-    memory_efficient=True,
-    max_mem_gb=None,
-):
+def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gpu=True):
     """
     Train an agent from scratch or continue training from a checkpoint,
-    optimized for GPU acceleration and memory efficiency.
+    optimized for GPU acceleration.
 
     Args:
         num_episodes: Number of episodes to train
         continue_from: Checkpoint path or episode number to continue from
         save_interval: How often to save checkpoints (in episodes)
         use_gpu: Whether to use GPU acceleration (if available)
-        memory_efficient: Whether to use memory optimization techniques
-        max_mem_gb: Maximum GPU memory to use in GB (None = no limit)
     """
     # Record start time
     start_time = time.time()
@@ -142,60 +132,18 @@ def train_agent(
         # Set to higher precision for numerical stability
         torch.set_float32_matmul_precision("high")
 
-        # Initialize memory monitor if memory_efficient is True
-        if memory_efficient:
-            mem_monitor = memory_monitor(interval=300)  # Check memory every 5 minutes
-
-            # Set memory budget if provided
-            if max_mem_gb is not None:
-                print(f"Training with memory budget of {max_mem_gb}GB")
-                available_mem = torch.cuda.get_device_properties(0).total_memory / (
-                    1024**3
-                )
-                if max_mem_gb > available_mem:
-                    print(
-                        f"Warning: Requested memory budget ({max_mem_gb}GB) exceeds available GPU memory ({available_mem:.1f}GB)"
-                    )
-                    max_mem_gb = (
-                        available_mem * 0.9
-                    )  # Use 90% of available memory as safety
-
     # Load agent, continuing from checkpoint if specified
     agent = load_agent(continue_from, use_gpu=use_gpu)
     agent.checkpoint_interval = save_interval  # Set custom checkpoint interval
 
-    # Optimize batch size for GPU and enforce small batch sizes for memory efficiency
+    # Optimize batch size for GPU
     if use_gpu and torch.cuda.is_available():
         original_batch_size = agent.batch_size
-
-        # If memory_efficient is True, use even smaller batch sizes
-        if memory_efficient:
-            # Further reduce batch size when in memory efficient mode
-            agent.batch_size = min(
-                32, original_batch_size
-            )  # Cap at 32 regardless of GPU
-
-            # Set even smaller batch size if memory budget is very restricted
-            if max_mem_gb is not None and max_mem_gb < 8:
-                agent.batch_size = 16  # Use tiny batch size for very limited memory
-
-            print(
-                f"Memory-efficient mode: Using smaller batch size of {agent.batch_size}"
-            )
-        else:
-            # Standard batch size increase for normal mode
-            agent.batch_size = original_batch_size * batch_size_multiplier
-            print(
-                f"GPU detected: Increasing batch size from {original_batch_size} to {agent.batch_size}"
-            )
-
-        # Reduce replay buffer size if memory budget is constrained
-        if max_mem_gb is not None and max_mem_gb < 12:
-            orig_buffer = agent.max_replay_buffer_size
-            agent.max_replay_buffer_size = min(2000, agent.max_replay_buffer_size)
-            print(
-                f"Reducing replay buffer size from {orig_buffer} to {agent.max_replay_buffer_size} to fit memory budget"
-            )
+        # Increase batch size for better GPU utilization
+        agent.batch_size = original_batch_size * batch_size_multiplier
+        print(
+            f"GPU detected: Increasing batch size from {original_batch_size} to {agent.batch_size}"
+        )
 
     # Log training metadata with hardware info
     gpu_info = "None"
@@ -217,8 +165,6 @@ def train_agent(
         "max_replay_buffer_size": agent.max_replay_buffer_size,
         "epsilon_decay": agent.epsilon_decay,
         "worker_threads": num_workers,
-        "memory_efficient": memory_efficient,
-        "memory_budget_gb": max_mem_gb,
     }
 
     # Save metadata
@@ -237,91 +183,8 @@ def train_agent(
     # Start training with performance monitoring
     print(f"Training agent for {num_episodes} episodes...")
 
-    # Set up memory tracking data
-    memory_data = []
-    last_mem_check = time.time()
-
-    # Define batch size for training in smaller chunks to manage memory
-    # For very long training runs, process in batches to allow for periodic cleanup
-    if memory_efficient:
-        # Use smaller batch size when memory budget is restricted
-        if max_mem_gb is not None and max_mem_gb < 12:
-            batch_episodes = 100  # Very small chunks for low memory
-        else:
-            batch_episodes = 250  # Smaller batches in memory-efficient mode
-    else:
-        batch_episodes = num_episodes  # All at once if not memory_efficient
-
-    try:
-        episodes_completed = 0
-        while episodes_completed < num_episodes:
-            # Determine how many episodes to run in this batch
-            current_batch = min(batch_episodes, num_episodes - episodes_completed)
-
-            # Run training for this batch
-            agent.train(episodes=current_batch)
-            episodes_completed += current_batch
-
-            # Periodically log memory usage if in memory efficient mode
-            if memory_efficient and torch.cuda.is_available():
-                current_mem, peak_mem = mem_monitor()
-                memory_data.append(
-                    {
-                        "episode": episodes_completed,
-                        "current_gb": current_mem,
-                        "peak_gb": peak_mem,
-                    }
-                )
-                last_mem_check = time.time()
-
-                # Check if we're exceeding our memory budget
-                if (
-                    max_mem_gb is not None and current_mem > max_mem_gb * 0.9
-                ):  # Within 90% of budget
-                    print(
-                        f"WARNING: Approaching memory budget ({current_mem:.2f}GB / {max_mem_gb}GB)"
-                    )
-                    print("Performing aggressive memory cleanup")
-
-                    # Force extensive cleanup
-                    torch.cuda.empty_cache()
-                    gc.collect()
-
-                    # If still above 95% of budget after cleanup, reduce batch size
-                    current_mem, _ = mem_monitor()
-                    if current_mem > max_mem_gb * 0.95:
-                        old_batch = agent.batch_size
-                        agent.batch_size = max(
-                            8, agent.batch_size // 2
-                        )  # Reduce batch size but minimum of 8
-                        print(
-                            f"Memory pressure high: Reducing batch size from {old_batch} to {agent.batch_size}"
-                        )
-
-                        # If we're still using too much memory, save and exit
-                        if current_mem > max_mem_gb * 0.98:
-                            print(
-                                f"CRITICAL: Memory usage ({current_mem:.2f}GB) almost at budget ({max_mem_gb}GB)"
-                            )
-                            print(
-                                "Saving checkpoint and exiting early to prevent out-of-memory error"
-                            )
-                            break
-
-            print(f"Completed {episodes_completed}/{num_episodes} episodes")
-
-            # Force memory cleanup between batches
-            if memory_efficient and torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                gc.collect()
-
-                # Sleep briefly to ensure cleanup completes
-                time.sleep(1)
-
-    except Exception as e:
-        print(f"Training interrupted: {str(e)}")
-        # Try to save what we have
-        print(f"Attempting to save partial progress...")
+    # Run training
+    agent.train(episodes=num_episodes)
 
     # Save final model
     final_path = os.path.join(checkpoint_dir, f"final_model_{timestamp}.pth")
@@ -332,8 +195,6 @@ def train_agent(
             "epsilon": agent.epsilon,
             "total_steps": agent.total_steps,
             "metadata": metadata,
-            "memory_data": memory_data if memory_efficient else [],
-            "episodes_completed": episodes_completed,
         },
         final_path,
     )
@@ -342,25 +203,15 @@ def train_agent(
     training_time = time.time() - start_time
     minutes = training_time / 60
     hours = minutes / 60
-    time_per_episode = training_time / max(1, episodes_completed)
+    time_per_episode = training_time / num_episodes
 
     print("\n" + "=" * 50)
-    print(
-        "TRAINING COMPLETED"
-        if episodes_completed >= num_episodes
-        else "TRAINING PARTIALLY COMPLETED"
-    )
+    print("TRAINING COMPLETED")
     print("=" * 50)
-    print(f"Episodes completed: {episodes_completed}/{num_episodes}")
     print(f"Total time: {training_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr)")
     print(f"Time per episode: {time_per_episode:.2f} sec")
     print(f"Final model saved to: {final_path}")
     print("=" * 50)
-
-    # Final memory cleanup
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
 
     return agent
 
@@ -449,10 +300,12 @@ def evaluate_checkpoints(
     print("\nEvaluating baseline (untrained) agent...")
     baseline_agent = DQNAgent()  # Create a new agent with random initialization
     start_time = time.time()
-    baseline_score = baseline_agent.test(episodes=test_episodes)
+    baseline_score, baseline_success_rate = baseline_agent.test(episodes=test_episodes)
     baseline_time = time.time() - start_time
-    print(f"Baseline average reward: {baseline_score:.4f} (time: {baseline_time:.1f}s)")
-    results[0] = baseline_score
+    print(
+        f"Baseline average reward: {baseline_score:.4f}, Success Rate: {baseline_success_rate:.1f}% (time: {baseline_time:.1f}s)"
+    )
+    results[0] = {"reward": baseline_score, "success_rate": baseline_success_rate}
 
     # Test each checkpoint
     checkpoints_tested = 0
@@ -472,16 +325,16 @@ def evaluate_checkpoints(
             # Load and test agent
             agent = load_agent(checkpoint_path, use_gpu=use_gpu)
             checkpoint_start = time.time()
-            reward = agent.test(episodes=test_episodes)
+            reward, success_rate = agent.test(episodes=test_episodes)
             checkpoint_time = time.time() - checkpoint_start
             total_eval_time += checkpoint_time
 
             # Store results
-            results[episode] = reward
+            results[episode] = {"reward": reward, "success_rate": success_rate}
             checkpoints_tested += 1
 
             print(
-                f"Checkpoint {episode} average reward: {reward:.4f} (time: {checkpoint_time:.1f}s)"
+                f"Checkpoint {episode} average reward: {reward:.4f}, Success Rate: {success_rate:.1f}% (time: {checkpoint_time:.1f}s)"
             )
         else:
             print(f"Checkpoint for episode {episode} not found, skipping")
@@ -495,24 +348,27 @@ def evaluate_checkpoints(
 
         best_agent = load_agent(best_path, use_gpu=use_gpu)
         best_start = time.time()
-        best_reward = best_agent.test(episodes=test_episodes)
+        best_reward, best_success_rate = best_agent.test(episodes=test_episodes)
         best_time = time.time() - best_start
         total_eval_time += best_time
 
-        results["best"] = best_reward
-        print(f"Best model average reward: {best_reward:.4f} (time: {best_time:.1f}s)")
+        results["best"] = {"reward": best_reward, "success_rate": best_success_rate}
+        print(
+            f"Best model average reward: {best_reward:.4f}, Success Rate: {best_success_rate:.1f}% (time: {best_time:.1f}s)"
+        )
 
-    # Create a learning curve plot with enhanced styling
-    plt.figure(figsize=(12, 8))
+    # Create learning curve plots for both reward and success rate
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     plt.style.use("ggplot")
 
     episodes = [e for e in results.keys() if isinstance(e, int)]
-    rewards = [results[e] for e in episodes]
+    rewards = [results[e]["reward"] for e in episodes]
+    success_rates = [results[e]["success_rate"] for e in episodes]
 
-    # Plot with improved styling
-    plt.plot(episodes, rewards, "o-", linewidth=2, markersize=8, label="Checkpoints")
-    plt.axhline(
-        y=baseline_score,
+    # Plot rewards
+    ax1.plot(episodes, rewards, "o-", linewidth=2, markersize=8, label="Checkpoints")
+    ax1.axhline(
+        y=results[0]["reward"],
         color="r",
         linestyle="--",
         linewidth=2,
@@ -520,27 +376,70 @@ def evaluate_checkpoints(
     )
 
     if "best" in results:
-        plt.axhline(
-            y=results["best"],
+        ax1.axhline(
+            y=results["best"]["reward"],
             color="g",
             linestyle="--",
             linewidth=2,
             label="Best Model",
         )
 
-    plt.xlabel("Training Episodes", fontsize=14)
-    plt.ylabel("Average Test Reward", fontsize=14)
-    plt.title("Learning Curve: Test Performance vs Training Episodes", fontsize=16)
-    plt.legend(fontsize=12)
-    plt.grid(True, alpha=0.3)
+    ax1.set_xlabel("Training Episodes", fontsize=14)
+    ax1.set_ylabel("Average Test Reward", fontsize=14)
+    ax1.set_title("Reward: Test Performance vs Training Episodes", fontsize=16)
+    ax1.legend(fontsize=12)
+    ax1.grid(True, alpha=0.3)
+
+    # Plot success rates
+    ax2.plot(
+        episodes,
+        success_rates,
+        "o-",
+        linewidth=2,
+        markersize=8,
+        color="blue",
+        label="Checkpoints",
+    )
+    ax2.axhline(
+        y=results[0]["success_rate"],
+        color="r",
+        linestyle="--",
+        linewidth=2,
+        label="Baseline (Untrained)",
+    )
+
+    if "best" in results:
+        ax2.axhline(
+            y=results["best"]["success_rate"],
+            color="g",
+            linestyle="--",
+            linewidth=2,
+            label="Best Model",
+        )
+
+    ax2.set_xlabel("Training Episodes", fontsize=14)
+    ax2.set_ylabel("Success Rate (%)", fontsize=14)
+    ax2.set_title("Success Rate: Test Performance vs Training Episodes", fontsize=16)
+    ax2.legend(fontsize=12)
+    ax2.grid(True, alpha=0.3)
+
     plt.tight_layout()
 
     # Add annotations for key points
     for i, episode in enumerate(episodes):
         if i == 0 or i == len(episodes) - 1 or (i % 3 == 0 and len(episodes) > 6):
-            plt.annotate(
+            ax1.annotate(
                 f"{rewards[i]:.3f}",
                 (episode, rewards[i]),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", fc="yellow", alpha=0.3),
+            )
+            ax2.annotate(
+                f"{success_rates[i]:.1f}%",
+                (episode, success_rates[i]),
                 textcoords="offset points",
                 xytext=(0, 10),
                 ha="center",
@@ -575,7 +474,13 @@ def evaluate_checkpoints(
     # Prepare final results with metadata
     final_results = {
         "metadata": evaluation_metadata,
-        "rewards": {str(k): float(v) for k, v in results.items()},
+        "results": {
+            str(k): {
+                "reward": float(v["reward"]),
+                "success_rate": float(v["success_rate"]),
+            }
+            for k, v in results.items()
+        },
     }
 
     with open(results_path, "w") as f:
@@ -593,56 +498,9 @@ def evaluate_checkpoints(
     return results
 
 
-def memory_monitor(interval=60):
-    """
-    Monitor GPU memory usage and return a function that logs memory stats.
-
-    Args:
-        interval: How often to log memory stats (in seconds)
-
-    Returns:
-        A monitoring function that can be called periodically
-    """
-    last_time = time.time()
-    peak_memory = 0
-
-    def monitor_func():
-        nonlocal last_time, peak_memory
-        current_time = time.time()
-
-        if torch.cuda.is_available():
-            current_memory = torch.cuda.memory_allocated() / (1024**3)  # GB
-            max_memory = torch.cuda.max_memory_allocated() / (1024**3)  # GB
-
-            # Update peak memory
-            if max_memory > peak_memory:
-                peak_memory = max_memory
-
-            # Log at specified interval
-            if current_time - last_time >= interval:
-                print(
-                    f"\nMEMORY STATUS: Current={current_memory:.2f}GB, Peak={peak_memory:.2f}GB"
-                )
-                # Try to free some memory if it's getting high
-                if (
-                    current_memory > 20
-                ):  # High memory usage threshold (adjust as needed)
-                    print("High memory usage detected - attempting cleanup")
-                    torch.cuda.empty_cache()
-                    gc.collect()
-                last_time = current_time
-
-            return current_memory, peak_memory
-        else:
-            return 0, 0
-
-    return monitor_func
-
-
 def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     """
     Run a quick benchmark to estimate runtime for larger training and testing.
-    Includes memory monitoring to detect potential memory leaks.
 
     Args:
         train_episodes: Small number of episodes to train (default 20)
@@ -656,9 +514,6 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     print("RUNNING PERFORMANCE BENCHMARK")
     print("=" * 60)
 
-    # Initialize memory monitor
-    memory_tracker = memory_monitor(interval=5)  # Check memory every 5 seconds
-
     # Initialize a fresh agent for benchmarking
     benchmark_agent = DQNAgent()
     if use_gpu and torch.cuda.is_available():
@@ -667,19 +522,14 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
         dummy_tensor = torch.ones(1000, 1000, device=device)
         dummy_result = torch.matmul(dummy_tensor, dummy_tensor)
         torch.cuda.synchronize()
-        # Clear dummy tensors
-        del dummy_tensor, dummy_result
     else:
         print("Using CPU")
 
     # Clear any cache before starting
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        initial_memory = torch.cuda.memory_allocated() / (1024**3)
-        print(f"Initial GPU memory: {initial_memory:.2f} GB")
 
     results = {}
-    memory_stats = []
 
     # Test single episode timing
     print("\nTiming single episode performance...")
@@ -687,34 +537,12 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     benchmark_agent.train(episodes=1)
     single_time = time.time() - single_start
     results["single_episode_time"] = single_time
-    if torch.cuda.is_available():
-        current_mem, peak_mem = memory_tracker()
-        memory_stats.append(
-            {"point": "after_single", "current": current_mem, "peak": peak_mem}
-        )
     print(f"Single training episode time: {single_time:.3f} seconds")
 
     # Training benchmark
     print(f"\nBenchmarking training for {train_episodes} episodes...")
     train_start = time.time()
-
-    # Run training with periodic memory checks
-    try:
-        for episode in range(train_episodes):
-            benchmark_agent.train(episodes=1)
-            if episode % 5 == 0:  # Check memory every 5 episodes
-                if torch.cuda.is_available():
-                    current_mem, peak_mem = memory_tracker()
-                    memory_stats.append(
-                        {
-                            "point": f"train_ep{episode}",
-                            "current": current_mem,
-                            "peak": peak_mem,
-                        }
-                    )
-    except Exception as e:
-        print(f"Benchmark training was interrupted: {e}")
-
+    benchmark_agent.train(episodes=train_episodes)
     train_time = time.time() - train_start
     avg_episode_time = train_time / train_episodes
     results["train_time"] = train_time
@@ -723,87 +551,27 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     print(f"Training completed in {train_time:.2f} seconds")
     print(f"Average time per episode: {avg_episode_time:.3f} seconds")
 
-    # Force cleanup between training and testing
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
-        time.sleep(1)  # Small delay to ensure cleanup completes
-        current_mem, peak_mem = memory_tracker()
-        memory_stats.append(
-            {"point": "after_training", "current": current_mem, "peak": peak_mem}
-        )
-
     # Testing benchmark
     print(f"\nBenchmarking testing for {test_episodes} episodes...")
     test_start = time.time()
-
-    try:
-        benchmark_agent.test(episodes=test_episodes)
-    except Exception as e:
-        print(f"Benchmark testing was interrupted: {e}")
-
+    benchmark_agent.test(episodes=test_episodes)
     test_time = time.time() - test_start
     avg_test_time = test_time / test_episodes
     results["test_time"] = test_time
     results["avg_test_time"] = avg_test_time
 
-    if torch.cuda.is_available():
-        current_mem, peak_mem = memory_tracker()
-        memory_stats.append(
-            {"point": "after_testing", "current": current_mem, "peak": peak_mem}
-        )
-
     print(f"Testing completed in {test_time:.2f} seconds")
     print(f"Average time per test episode: {avg_test_time:.3f} seconds")
 
-    # Calculate memory increase per episode (to estimate leaks)
-    if len(memory_stats) >= 3:
-        initial_mem = memory_stats[0]["current"]
-        final_mem = memory_stats[-1]["current"]
-        mem_increase = final_mem - initial_mem
-        increase_per_episode = (
-            mem_increase / train_episodes if train_episodes > 0 else 0
-        )
-
-        results["memory_initial_gb"] = initial_mem
-        results["memory_final_gb"] = final_mem
-        results["memory_increase_gb"] = mem_increase
-        results["memory_increase_per_episode_mb"] = (
-            increase_per_episode * 1024
-        )  # Convert to MB
-
-        print(f"\nMemory usage analysis:")
-        print(f"  Initial memory: {initial_mem:.2f} GB")
-        print(f"  Final memory: {final_mem:.2f} GB")
-        print(f"  Memory increase: {mem_increase:.2f} GB")
-        print(f"  Increase per episode: {increase_per_episode * 1024:.2f} MB")
-
-        if increase_per_episode > 0.001:  # More than 1MB per episode
-            print(
-                f"  WARNING: Potential memory leak detected ({increase_per_episode * 1024:.2f} MB/episode)"
-            )
-            print(
-                f"  Estimated memory usage for 10,000 episodes: {initial_mem + increase_per_episode * 10000:.2f} GB"
-            )
-
-    # Extrapolation estimates with memory consideration
+    # Extrapolation estimates
     print("\nExtrapolated runtime estimates:")
     for ep_count in [100, 500, 1000, 2000, 5000]:
         est_time = avg_episode_time * ep_count
         minutes = est_time / 60
         hours = minutes / 60
 
-        # Also estimate memory if we have the data
-        memory_estimate = ""
-        if "memory_increase_per_episode_mb" in results:
-            est_mem_gb = (
-                initial_mem
-                + (results["memory_increase_per_episode_mb"] / 1024) * ep_count
-            )
-            memory_estimate = f", Est. memory: {est_mem_gb:.1f} GB"
-
         print(
-            f"  • {ep_count} episodes: {est_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr){memory_estimate}"
+            f"  • {ep_count} episodes: {est_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr)"
         )
 
     # Test episodes extrapolation
@@ -833,18 +601,12 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
         )
 
     results["hardware_info"] = hw_info
-    results["memory_stats"] = memory_stats
 
     with open(benchmark_file, "w") as f:
         json.dump(results, f, indent=4)
 
     print("\nBenchmark results saved to:", benchmark_file)
     print("=" * 60)
-
-    # Final cleanup
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        gc.collect()
 
     return results
 
@@ -862,97 +624,74 @@ if __name__ == "__main__":
     else:
         print("\nNo GPU available - will use CPU for training and evaluation")
 
-    # Run a benchmark first to estimate memory usage and runtime
-    print("\nRunning benchmark to assess memory usage and performance...")
-    benchmark_results = benchmark_performance(
-        train_episodes=20,  # Quick benchmark with 20 episodes
-        test_episodes=50,  # Short test benchmark
+    """
+    # Run the performance benchmark to estimate training and testing time
+    benchmark_performance(
+        train_episodes=20,  # Quick training benchmark with 20 episodes
+        test_episodes=100,  # Test benchmark with 100 episodes
         use_gpu=True,  # Use GPU if available
     )
+    """
 
-    # Check if there might be memory issues
-    memory_warning = False
-    memory_limit_gb = None
-    if (
-        torch.cuda.is_available()
-        and "memory_increase_per_episode_mb" in benchmark_results
-    ):
-        increase_per_ep_mb = benchmark_results["memory_increase_per_episode_mb"]
-        gpu_total_mem = torch.cuda.get_device_properties(0).total_memory / 1e9
-
-        # Set a memory budget based on the leak rate and total training episodes
-        if increase_per_ep_mb > 1.0:  # More than 1MB increase per episode
-            memory_warning = True
-            print("\n⚠️ WARNING: Potential memory leak detected in benchmark")
-            print(f"Memory increase per episode: {increase_per_ep_mb:.2f}MB")
-            print("Training will proceed in memory-efficient mode")
-
-            # Calculate safe memory limit (75% of available memory)
-            memory_limit_gb = min(18, gpu_total_mem * 0.75)
-            print(
-                f"Setting memory budget to {memory_limit_gb:.1f}GB (75% of available {gpu_total_mem:.1f}GB)"
-            )
-        else:
-            print("\n✓ Memory usage looks stable, proceeding with normal training")
-
-    # Ask user if they want to continue
-    choice = (
-        input("\nDo you want to proceed with full training? (y/n): ").strip().lower()
+    # OPTION 1: Train a new agent from scratch with GPU acceleration
+    # Highly recommended for sparse reward environments
+    train_agent(
+        num_episodes=2000,  # 2K episodes to train (more for sparse rewards)
+        save_interval=100,  # Save model every 100 episodes
+        use_gpu=True,  # Use GPU acceleration if available
     )
 
-    if choice == "y" or choice == "yes":
-        print("\nStarting training with memory optimization...")
+    test_agent(
+        checkpoint="best",  # Test the best model saved during training
+        num_episodes=10000,  # 10K test episodes
+        use_gpu=True,  # Use GPU for faster testing
+    )
 
-        # Ask for the number of episodes
-        try:
-            num_episodes = int(
-                input("How many episodes do you want to train for? [default=2000]: ")
-                or "2000"
-            )
-        except ValueError:
-            num_episodes = 2000
-            print(f"Invalid input, using default of {num_episodes} episodes")
+    # OPTION 2: Continue training from a previous checkpoint
+    # Uncomment to use:
+    """
+    train_agent(
+        num_episodes=1000,          # Additional episodes to train
+        continue_from="best",       # Continue from the best model so far
+        save_interval=100,          # Save checkpoints every 100 episodes
+        use_gpu=True                # Use GPU acceleration
+    )
+    
+    test_agent(
+        checkpoint="final",  # Test the final model after continued training
+        num_episodes=100,  # Test on 1000 episodes
+        use_gpu=True,  # Use GPU for faster testing
+    )
+    """
 
-        # Based on the analysis of the training curve (learning_curve_8500.png),
-        # meaningful learning happens within 2000-3000 episodes
-        if num_episodes > 3000:
-            print(
-                f"Note: Based on learning curves, meaningful learning typically occurs within 2000-3000 episodes"
-            )
-            confirm = (
-                input(
-                    f"Do you still want to train for {num_episodes} episodes? (y/n): "
-                )
-                .strip()
-                .lower()
-            )
-            if confirm != "y" and confirm != "yes":
-                num_episodes = 3000
-                print(f"Limiting training to {num_episodes} episodes")
+    # OPTION 3: Evaluate multiple checkpoints to create a learning curve
+    # Uncomment to use:
+    """
+    train_agent(
+        num_episodes=10000,  # Train on 10K episodes
+        save_interval=500,  # Save checkpoints every 500 episodes
+        use_gpu=True,  # Use GPU acceleration
+    )
 
-        # Train the agent with memory efficiency if there was a warning
-        train_agent(
-            num_episodes=num_episodes,  # User-specified number of episodes
-            save_interval=250,  # Save checkpoints regularly
-            use_gpu=True,  # Use GPU acceleration
-            memory_efficient=True,  # Always use memory efficiency
-            max_mem_gb=memory_limit_gb,  # Set memory budget if leak was detected
-        )
+    
+    evaluate_checkpoints(
+        checkpoint_range=(
+            500,
+            8500,
+            1000,
+        ),  # Test models from episode 1K to 10K, every 1K episodes
+        test_episodes=1000,  # Test each checkpoint on 10K episodes
+        use_gpu=True,  # Use GPU for faster evaluation
+    )
+    """
 
-        # Test the best model
-        print("\nTraining complete, testing the best model...")
-        test_agent(
-            checkpoint="best",  # Test the best model
-            num_episodes=1000,  # Number of test episodes
-            use_gpu=True,  # Use GPU for testing
-        )
-    else:
-        print(
-            "\nTraining cancelled. You can modify the script parameters and run again."
-        )
-        print("For long training runs with limited GPU memory, consider these options:")
-        print("1. Reduce batch_size in DQNAgent.__init__")
-        print("2. Reduce max_replay_buffer_size in DQNAgent.__init__")
-        print("3. Set memory_efficient=True in train_agent()")
-        print("4. Train in smaller episode batches")
-        print("5. Use the max_mem_gb parameter to set a memory budget")
+    # OPTION 4: Quick test of a specific checkpoint
+    # Uncomment to use:
+    """
+    test_agent(
+        checkpoint=1000,            # Test the model saved at episode 1000
+        num_episodes=100,           # Run 100 test episodes
+        render=False,               # Don't render the environment
+        use_gpu=True                # Use GPU acceleration
+    )
+    """

@@ -12,6 +12,7 @@ import spacy
 import os
 import json
 from PIL import Image
+from datetime import datetime
 
 # Load FastText word embeddings from spaCy (300-dimensional)
 nlp = spacy.load("en_core_web_md")
@@ -21,24 +22,8 @@ EMBED_DIM = nlp("hello").vector.shape[0]  # 300
 def get_fasttext_embedding(text):
     """
     Convert a text (word or phrase) to a 300-dimensional FastText embedding.
-    Includes error handling for text processing.
     """
-    try:
-        if not isinstance(text, str):
-            # Convert to string if not already
-            text = str(text) if text is not None else ""
-
-        # Handle empty text
-        if not text.strip():
-            text = "none"
-
-        # Get embedding from spaCy
-        vector = nlp(text).vector
-        return torch.tensor(vector, dtype=torch.float32)
-    except Exception as e:
-        print(f"Error generating embedding for '{text}': {e}")
-        # Return zero vector as fallback
-        return torch.zeros(EMBED_DIM, dtype=torch.float32)
+    return torch.tensor(nlp(text).vector, dtype=torch.float32)
 
 
 def visualize_image(image):
@@ -144,27 +129,7 @@ class DQNAgent:
         self.alpha = 0.0005  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-
-        # Memory optimization: Adjust batch size based on available GPU memory
-        if torch.cuda.is_available():
-            # Get GPU memory information
-            gpu_mem_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            print(f"Available GPU memory: {gpu_mem_gb:.1f} GB")
-
-            # Scale batch size based on available memory
-            if gpu_mem_gb > 20:  # High-end GPU
-                self.batch_size = 64  # Reduced from 128
-            elif gpu_mem_gb > 10:  # Mid-range GPU
-                self.batch_size = 48  # Reduced from 96
-            elif gpu_mem_gb > 6:  # Lower-end GPU
-                self.batch_size = 32  # Reduced from 64
-            else:  # Very limited GPU memory
-                self.batch_size = 16  # Reduced from 32
-
-            print(f"Using batch size: {self.batch_size}")
-        else:
-            self.batch_size = 64  # CPU default
-
+        self.batch_size = 128  # Larger batch size for better gradient estimates
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
@@ -177,20 +142,9 @@ class DQNAgent:
         self.target_update_freq = 500
         self.total_steps = 0
 
-        # Memory parameters - reduce buffer size to save memory
+        # Memory parameters
         self.replay_buffer = {}
-        # Memory optimization: Scale buffer size based on available memory
-        if torch.cuda.is_available():
-            if torch.cuda.get_device_properties(0).total_memory / (1024**3) < 12:
-                self.max_replay_buffer_size = (
-                    2000  # Much smaller buffer for limited memory
-                )
-            else:
-                self.max_replay_buffer_size = 4000  # Reduced from 5000/10000
-        else:
-            self.max_replay_buffer_size = 5000  # Standard size for CPU
-
-        print(f"Using replay buffer size: {self.max_replay_buffer_size}")
+        self.max_replay_buffer_size = 10000  # Reduced for computational efficiency
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -200,7 +154,7 @@ class DQNAgent:
         self.per_epsilon = 0.01
 
         # Reward shaping weight
-        self.distance_weight = 0.05
+        self.distance_weight = 0.01
 
         # Track previous room for room change bonus
         self.prev_room = None
@@ -228,19 +182,12 @@ class DQNAgent:
         # Checkpoint interval (save model every N episodes)
         self.checkpoint_interval = 250
         # Directory to save checkpoints
-        self.checkpoint_dir = "checkpoints8"
+        self.checkpoint_dir = "checkpoints9"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Performance tracking
         self.best_avg_reward = float("-inf")
         self.no_improvement_count = 0
-
-        # Memory management - clean up torch cache before starting
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            print(
-                f"Initial GPU memory allocated: {torch.cuda.memory_allocated() / (1024**2):.1f} MB"
-            )
 
         # Save environment info for reproducibility
         self.env_info = {
@@ -248,37 +195,15 @@ class DQNAgent:
             "obs_shape": self.obs_shape,
             "action_space": self.output_dim,
             "device": str(self.device),
-            "batch_size": self.batch_size,
-            "replay_buffer_size": self.max_replay_buffer_size,
         }
 
     def encode_str(self, text, encode_context=True):
         """
         Convert a string to a 300-dimensional FastText embedding and move to device.
-        Includes robust error handling.
         """
         if encode_context:
-            try:
-                # Handle invalid input
-                if not isinstance(text, str) or not text:
-                    text = "none"
-
-                # Get embedding and move to GPU if available - handle errors
-                embedding = get_fasttext_embedding(text)
-
-                # Only perform device transfer if needed
-                if embedding.device != self.device:
-                    embedding = embedding.to(self.device)
-
-                # Add batch dimension if needed
-                if embedding.dim() == 1:
-                    embedding = embedding.unsqueeze(0)
-
-                return embedding
-            except Exception as e:
-                print(f"Error in encode_str for '{text}': {e}")
-                # Fallback to zeros on the correct device
-                return torch.zeros(1, EMBED_DIM, device=self.device)
+            # Get embedding and move to GPU if available
+            return get_fasttext_embedding(text).unsqueeze(0).to(self.device)
         else:
             return text if text != "" else "none"
 
@@ -287,8 +212,6 @@ class DQNAgent:
         Preprocess the state by concatenating the observation with context features.
         The context is arranged as:
           [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
-
-        Memory optimized version to prevent GPU memory leaks.
         """
         if not hint:
             hint = self.current_hint
@@ -301,99 +224,35 @@ class DQNAgent:
         hint_str = hint
 
         if encode_context:
-            try:
-                # Create observation tensor and move to device - normalize in-place where possible
-                # Convert to float32 to save memory (instead of float64)
-                obs_array = obs["image"] / 255.0
-                observation = (
-                    torch.FloatTensor(obs_array)
-                    .permute(2, 0, 1)
-                    .unsqueeze(0)
-                    .to(self.device)
-                )
+            # Create observation tensor and move to device
+            observation = (
+                torch.FloatTensor(obs["image"] / 255.0)
+                .permute(2, 0, 1)
+                .unsqueeze(0)
+                .to(self.device)
+            )
 
-                # Get embeddings using context-specific methods to save memory
-                task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
+            # Create embeddings and context vectors on the device
+            task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
 
-                # Create direction one-hot directly on device to avoid CPU->GPU transfer
-                direction_one_hot = torch.zeros(1, 4, device=self.device)
-                direction_one_hot[0, direction_int] = 1.0
+            direction_one_hot = torch.zeros(1, 4, device=self.device)
+            direction_one_hot[0, direction_int] = 1.0
 
-                # Encode other embeddings
-                carrying_embed = self.encode_str(
-                    carrying_str, encode_context
-                )  # (1, 300)
-                front_obj_embed = self.encode_str(
-                    front_obj_str, encode_context
-                )  # (1, 300)
-                hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
+            carrying_embed = self.encode_str(carrying_str, encode_context)  # (1, 300)
+            front_obj_embed = self.encode_str(front_obj_str, encode_context)  # (1, 300)
+            hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
 
-                # Concatenate with task embedding at the start - do this once to avoid multiple concatenations
-                context = torch.cat(
-                    [
-                        task_embed,
-                        direction_one_hot,
-                        carrying_embed,
-                        front_obj_embed,
-                        hint_embed,
-                    ],
-                    dim=1,
-                )
-
-                # Optional memory cleanup for large tensors
-                del task_embed, carrying_embed, front_obj_embed, hint_embed
-
-                return observation, context
-
-            except RuntimeError as e:
-                print(f"Error in preprocess_state: {e}")
-                print("Falling back to alternative preprocessing method")
-                # Alternative approach if the normal method fails
-                # This can happen when there are device mismatches
-                try:
-                    obs_array = obs["image"] / 255.0
-                    observation = (
-                        torch.FloatTensor(obs_array).permute(2, 0, 1).unsqueeze(0)
-                    )
-                    observation = observation.to(self.device)
-
-                    task_embed = (
-                        get_fasttext_embedding(task_str).unsqueeze(0).to(self.device)
-                    )
-
-                    direction_one_hot = torch.zeros(1, 4).to(self.device)
-                    direction_one_hot[0, direction_int] = 1.0
-
-                    carrying_embed = (
-                        get_fasttext_embedding(carrying_str)
-                        .unsqueeze(0)
-                        .to(self.device)
-                    )
-                    front_obj_embed = (
-                        get_fasttext_embedding(front_obj_str)
-                        .unsqueeze(0)
-                        .to(self.device)
-                    )
-                    hint_embed = (
-                        get_fasttext_embedding(hint_str).unsqueeze(0).to(self.device)
-                    )
-
-                    context = torch.cat(
-                        [
-                            task_embed,
-                            direction_one_hot,
-                            carrying_embed,
-                            front_obj_embed,
-                            hint_embed,
-                        ],
-                        dim=1,
-                    ).to(self.device)
-
-                    return observation, context
-
-                except Exception as e2:
-                    print(f"Alternative method also failed: {e2}")
-                    raise e2
+            # Concatenate with task embedding at the start
+            context = torch.cat(
+                [
+                    task_embed,
+                    direction_one_hot,
+                    carrying_embed,
+                    front_obj_embed,
+                    hint_embed,
+                ],
+                dim=1,
+            )
         else:
             # For non-encoded context, return a JSON string (for visualization if needed)
             observation = Image.fromarray(obs["image"])
@@ -406,7 +265,7 @@ class DQNAgent:
             }
             context = json.dumps(context_dict)
 
-            return observation, context
+        return observation, context
 
     def uncertainty_score(self, state):
         """
@@ -459,14 +318,14 @@ class DQNAgent:
             if carried_name is not None and carried_name == obj_name:
                 continue
 
-            # Calculate basic distance
-            try:
-                euclidean_dist = np.linalg.norm(
-                    np.array(agent_pos, dtype=float) - np.array(obj_pos, dtype=float)
-                )
-            except:
-                # Fallback if positions are invalid
-                euclidean_dist = 10.0
+                # Calculate basic distance
+                # try:
+            euclidean_dist = np.linalg.norm(
+                np.array(agent_pos, dtype=float) - np.array(obj_pos, dtype=float)
+            )
+            # except:
+            #     # Fallback if positions are invalid
+            #     euclidean_dist = 10.0
 
             # Add room penalty if object is in a different room
             room_penalty = 5 if obj_room and obj_room != agent_room else 0
@@ -578,7 +437,8 @@ class DQNAgent:
         # Update previous room for next step
         self.prev_room = current_room
 
-        return shaped_reward, current_distance
+        # Return both the shaped reward (for learning) and the original reward (for logging)
+        return shaped_reward, current_distance, base_reward
 
     def choose_action(self, state, obs, info):
         """
@@ -643,75 +503,7 @@ class DQNAgent:
             priority = (abs(error) + self.per_epsilon) ** self.per_alpha
             self.replay_buffer[task_id]["priorities"].append(priority)
 
-        # Deep copy state components to prevent memory leaks from tensor references
-        state, action, reward, next_state, terminated = experience
-
-        # Only keep the necessary data - detach tensors and move to CPU
-        if isinstance(state, tuple) and len(state) == 2:
-            # Original state is (observation, context) tuple
-            # Move tensors to CPU and detach - handle non-tensor objects safely
-            if torch.is_tensor(state[0]):
-                # First check if tensor is already on CPU to avoid unnecessary transfers
-                if state[0].device.type != "cpu":
-                    obs_cpu = state[0].detach().cpu()
-                else:
-                    obs_cpu = state[0].detach()  # Already on CPU, just detach
-            else:
-                obs_cpu = state[0]  # Not a tensor, keep as is
-
-            if torch.is_tensor(state[1]):
-                if state[1].device.type != "cpu":
-                    context_cpu = state[1].detach().cpu()
-                else:
-                    context_cpu = state[1].detach()
-            else:
-                context_cpu = state[1]
-
-            state_cpu = (obs_cpu, context_cpu)
-        else:
-            state_cpu = state
-
-        if isinstance(next_state, tuple) and len(next_state) == 2:
-            # Original next_state is (observation, context) tuple
-            # Move tensors to CPU and detach
-            if torch.is_tensor(next_state[0]):
-                if next_state[0].device.type != "cpu":
-                    next_obs_cpu = next_state[0].detach().cpu()
-                else:
-                    next_obs_cpu = next_state[0].detach()
-            else:
-                next_obs_cpu = next_state[0]
-
-            if torch.is_tensor(next_state[1]):
-                if next_state[1].device.type != "cpu":
-                    next_context_cpu = next_state[1].detach().cpu()
-                else:
-                    next_context_cpu = next_state[1].detach()
-            else:
-                next_context_cpu = next_state[1]
-
-            next_state_cpu = (next_obs_cpu, next_context_cpu)
-        else:
-            next_state_cpu = next_state
-
-        # Create new experience tuple with CPU tensors
-        cpu_experience = [state_cpu, action, reward, next_state_cpu, terminated]
-
-        self.replay_buffer[task_id]["experiences"].append(cpu_experience)
-
-        # Memory management: limit the number of tasks in replay buffer
-        if len(self.replay_buffer) > 10:  # Limit to most recent 10 tasks
-            oldest_task = next(iter(self.replay_buffer))
-            if oldest_task != task_id:
-                del self.replay_buffer[oldest_task]
-                print(
-                    f"Removed oldest task {oldest_task} from replay buffer to save memory"
-                )
-
-        # Periodically force garbage collection to free unused memory
-        if self.total_steps % 1000 == 0:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        self.replay_buffer[task_id]["experiences"].append(experience)
 
     def sample_batch(self, task_id):
         """Sample a batch of experiences using prioritized experience replay with error handling"""
@@ -732,48 +524,45 @@ class DQNAgent:
         if self.use_per and len(self.replay_buffer[task_id]["priorities"]) == len(
             self.replay_buffer[task_id]["experiences"]
         ):
-            try:
-                priorities = np.array(self.replay_buffer[task_id]["priorities"])
-                # Handle zero sum
-                if np.sum(priorities) <= 0:
-                    # Fallback to uniform sampling
-                    indices = np.random.choice(
-                        buffer_size, actual_batch_size, replace=False
-                    )
-                    weights = np.ones(actual_batch_size)
-                else:
-                    probs = priorities / np.sum(priorities)
-                    indices = np.random.choice(
-                        buffer_size, actual_batch_size, p=probs, replace=False
-                    )
-
-                    # Calculate importance sampling weights
-                    self.per_beta = min(1.0, self.per_beta + self.per_beta_increment)
-                    weights = (buffer_size * probs[indices]) ** (-self.per_beta)
-                    weights /= (
-                        np.max(weights) if np.max(weights) > 0 else 1.0
-                    )  # Normalize
-
-                # Get selected experiences
-                batch = [self.replay_buffer[task_id]["experiences"][i] for i in indices]
-                return batch, indices, weights
-            except Exception as e:
-                print(f"PER sampling error: {e}, using uniform sampling instead")
-                # Fallback to uniform sampling on error
-                batch = random.sample(
-                    list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
+            priorities = np.array(self.replay_buffer[task_id]["priorities"])
+            # Handle zero sum
+            if np.sum(priorities) <= 0:
+                # Fallback to uniform sampling
+                indices = np.random.choice(
+                    buffer_size, actual_batch_size, replace=False
                 )
-                return batch, None, None
+                weights = np.ones(actual_batch_size)
+            else:
+                probs = priorities / np.sum(priorities)
+                indices = np.random.choice(
+                    buffer_size, actual_batch_size, p=probs, replace=False
+                )
+
+                # Calculate importance sampling weights
+                self.per_beta = min(1.0, self.per_beta + self.per_beta_increment)
+                weights = (buffer_size * probs[indices]) ** (-self.per_beta)
+                weights /= np.max(weights) if np.max(weights) > 0 else 1.0  # Normalize
+
+            # Get selected experiences
+            batch = [self.replay_buffer[task_id]["experiences"][i] for i in indices]
+            return batch, indices, weights
+            # except Exception as e:
+            #     print(f"PER sampling error: {e}, using uniform sampling instead")
+            #     # Fallback to uniform sampling on error
+            #     batch = random.sample(
+            #         list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
+            #     )
+            #     return batch, None, None
         else:
             # Uniform sampling if PER is disabled or sizes don't match
-            try:
-                batch = random.sample(
-                    list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
-                )
-                return batch, None, None
-            except:
-                print(f"Sampling error, buffer size: {buffer_size}")
-                return None, None, None
+            # try:
+            batch = random.sample(
+                list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
+            )
+            return batch, None, None
+        # except:
+        #     print(f"Sampling error, buffer size: {buffer_size}")
+        #     return None, None, None
 
     def update_priorities(self, task_id, indices, td_errors):
         """Update priorities in the replay buffer based on TD errors"""
@@ -800,64 +589,10 @@ class DQNAgent:
         states, actions, rewards, next_states, dones = zip(*batch)
 
         # Move all tensors to the device (GPU)
-        # Handle CPU stored tensors by explicitly moving them to the device
-        try:
-            observation_batch = torch.cat([s[0].to(self.device) for s in states], dim=0)
-            context_batch = torch.cat([s[1].to(self.device) for s in states], dim=0)
-            next_observation_batch = torch.cat(
-                [s[0].to(self.device) for s in next_states], dim=0
-            )
-            next_context_batch = torch.cat(
-                [s[1].to(self.device) for s in next_states], dim=0
-            )
-        except RuntimeError as e:
-            print(f"Tensor device error: {e}")
-            print("Attempting alternative tensor loading approach...")
-            # Alternative approach for handling different tensor types
-            observation_batch = torch.cat(
-                [
-                    (
-                        s[0].detach().to(self.device)
-                        if torch.is_tensor(s[0])
-                        else torch.tensor(s[0], device=self.device)
-                    )
-                    for s in states
-                ],
-                dim=0,
-            )
-            context_batch = torch.cat(
-                [
-                    (
-                        s[1].detach().to(self.device)
-                        if torch.is_tensor(s[1])
-                        else torch.tensor(s[1], device=self.device)
-                    )
-                    for s in states
-                ],
-                dim=0,
-            )
-            next_observation_batch = torch.cat(
-                [
-                    (
-                        s[0].detach().to(self.device)
-                        if torch.is_tensor(s[0])
-                        else torch.tensor(s[0], device=self.device)
-                    )
-                    for s in next_states
-                ],
-                dim=0,
-            )
-            next_context_batch = torch.cat(
-                [
-                    (
-                        s[1].detach().to(self.device)
-                        if torch.is_tensor(s[1])
-                        else torch.tensor(s[1], device=self.device)
-                    )
-                    for s in next_states
-                ],
-                dim=0,
-            )
+        observation_batch = torch.cat([s[0] for s in states], dim=0)
+        context_batch = torch.cat([s[1] for s in states], dim=0)
+        next_observation_batch = torch.cat([s[0] for s in next_states], dim=0)
+        next_context_batch = torch.cat([s[1] for s in next_states], dim=0)
 
         actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
@@ -867,19 +602,13 @@ class DQNAgent:
         if weights is not None:
             weights = torch.FloatTensor(weights).to(self.device)
 
-        # Use with torch.no_grad() for target calculation to save memory
         with torch.no_grad():
             next_q_values = self.target_model(
                 next_observation_batch, next_context_batch
             )
             max_next_q_values, _ = torch.max(next_q_values, dim=1)
             target_q_values = rewards + self.gamma * (1 - dones) * max_next_q_values
-            # Detach to free memory
-            target_q_values = target_q_values.detach()
-            # Clean up intermediate tensors
-            del next_q_values, max_next_q_values
 
-        # Compute current Q-values
         current_q_values = self.model(observation_batch, context_batch)
         current_q_values = current_q_values.gather(1, actions).squeeze(1)
 
@@ -892,41 +621,23 @@ class DQNAgent:
             losses = self.loss_fn(current_q_values, target_q_values)
             # Apply importance sampling weights
             loss = torch.mean(weights * losses)
-            # Clean up
-            del losses
         else:
             # Regular MSE loss (mean is applied here)
             loss = torch.mean(self.loss_fn(current_q_values, target_q_values))
 
-        # Backpropagation
         self.optimizer.zero_grad()
         loss.backward()
         # Gradient clipping to prevent exploding gradients
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 10.0)
         self.optimizer.step()
 
-        # Get loss value before cleanup
-        loss_value = loss.item()
-
         # Update priorities in replay buffer if using PER
         if self.use_per and indices is not None:
             # Get TD errors as numpy array - move back to CPU for numpy operations
             td_errors_np = td_errors.detach().cpu().numpy()
             self.update_priorities(task_id, indices, td_errors_np)
-            del td_errors_np
 
-        # Clean up all tensors to free memory
-        del observation_batch, context_batch, next_observation_batch, next_context_batch
-        del actions, rewards, dones, target_q_values, current_q_values, td_errors
-        if weights is not None:
-            del weights
-        del loss
-
-        # Force garbage collection occasionally
-        if self.total_steps % 1000 == 0 and torch.cuda.is_available():
-            torch.cuda.empty_cache()
-
-        return loss_value
+        return loss.item()
 
     def train(self, episodes=None):
         if episodes is None:
@@ -934,253 +645,213 @@ class DQNAgent:
 
         # For tracking performance trends
         rewards_history = []
+        success_history = []
 
         # Early stopping variables
         best_reward = float("-inf")
         no_improvement_count = 0
 
-        # Memory management: Add periodic memory cleanup counter
-        memory_cleanup_freq = 5  # Clean memory every N episodes (reduced from 10)
-        # Clean up replay buffer more frequently
-        replay_buffer_cleanup_freq = 100  # Clean up old tasks every N episodes
+        for episode in range(episodes):
+            obs, info = self.env.reset()
+            self.num_llm_calls = 0
+            self.current_hint = ""
+            # Reset previous room tracking
+            self.prev_room = info["symbolic_state"]["agent"]["room"]
 
-        try:
-            for episode in range(episodes):
-                obs, info = self.env.reset()
-                self.num_llm_calls = 0
-                self.current_hint = ""
-                # Reset previous room tracking
-                self.prev_room = info["symbolic_state"]["agent"]["room"]
+            state = self.preprocess_state(obs, info)
+            total_reward = 0
+            original_reward_sum = 0  # Track actual rewards separately
+            episode_success = False
+            prev_distance = self.compute_distance(info)
+            task_id = self.env.task
+            if task_id not in self.replay_buffer:
+                self.replay_buffer[task_id] = {
+                    "experiences": deque(maxlen=self.max_replay_buffer_size),
+                    "priorities": deque(maxlen=self.max_replay_buffer_size),
+                }
 
-                state = self.preprocess_state(obs, info)
-                total_reward = 0
-                prev_distance = self.compute_distance(info)
-                task_id = self.env.task
-                if task_id not in self.replay_buffer:
-                    self.replay_buffer[task_id] = {
-                        "experiences": deque(maxlen=self.max_replay_buffer_size),
-                        "priorities": deque(maxlen=self.max_replay_buffer_size),
-                    }
+            # Verbose logging every 50 episodes or as needed
+            verbose = episode % 50 == 0
+            if verbose:
+                print(f"\nEpisode {episode + 1}/{episodes}, Task: {task_id}")
+                print(f"Current epsilon: {self.epsilon:.3f}")
 
-                # Verbose logging every 500 episodes or as needed
-                verbose = episode % 500 == 0
-                if verbose:
-                    print(f"\nEpisode {episode + 1}/{episodes}, Task: {task_id}")
-                    print(f"Current epsilon: {self.epsilon:.3f}")
+            episode_loss = 0.0
+            train_steps = 0
 
-                episode_loss = 0.0
-                train_steps = 0
+            for step in range(self.env.max_steps):
+                action, cost, state = self.choose_action(state, obs, info)
+                obs, reward, terminated, truncated, info = self.env.step(action)
 
-                for step in range(self.env.max_steps):
-                    action, cost, state = self.choose_action(state, obs, info)
-                    obs, reward, terminated, truncated, info = self.env.step(action)
+                self.total_steps += 1
 
-                    self.total_steps += 1
+                # Track if we got a success reward
+                if reward > 0:
+                    episode_success = True
+                    self.current_hint = ""
+                    if verbose:
+                        print(f"  Step {step}: Got reward {reward}! Success!")
 
-                    if reward > 0:
-                        self.current_hint = ""
-                        if verbose:
-                            print(f"  Step {step}: Got reward {reward}! Success!")
+                # Apply reward shaping but keep track of original reward
+                shaped_reward, prev_distance, original_reward = self.shaped_reward(
+                    reward, info, prev_distance
+                )
+                shaped_reward -= cost
+                original_reward_sum += original_reward  # Track real rewards
+                original_reward_sum -= cost
 
-                    # Apply reward shaping
-                    reward, prev_distance = self.shaped_reward(
-                        reward, info, prev_distance
-                    )
-                    reward -= cost
+                next_state = self.preprocess_state(obs, info)
 
-                    next_state = self.preprocess_state(obs, info)
+                # Create transition and add to replay buffer with maximum priority initially
+                transition = [state, action, shaped_reward, next_state, terminated]
+                self.add_experience(task_id, transition)
 
-                    # Create transition and add to replay buffer with maximum priority initially
-                    transition = [state, action, reward, next_state, terminated]
-                    self.add_experience(task_id, transition)
+                state = next_state
+                total_reward += shaped_reward
 
-                    # Clear state reference to avoid memory leak
-                    del state
-                    state = next_state
+                # Train less frequently to speed up training (every 4 steps)
+                if self.total_steps % 4 == 0:
+                    loss_val = self.train_step()
+                    if loss_val is not None:
+                        episode_loss += loss_val
+                        train_steps += 1
 
-                    total_reward += reward
+                # Update target network less frequently to speed up training
+                if self.total_steps % self.target_update_freq == 0:
+                    self.update_target_network()
+                    if verbose:
+                        print(f"  Updated target network at step {self.total_steps}")
 
-                    # Train less frequently to speed up training (every 4 steps)
-                    if self.total_steps % 4 == 0:
-                        loss_val = self.train_step()
-                        if loss_val is not None:
-                            episode_loss += loss_val
-                            train_steps += 1
+                if terminated or truncated:
+                    break
 
-                    # Update target network less frequently to speed up training
-                    if self.total_steps % self.target_update_freq == 0:
-                        self.update_target_network()
-                        if verbose:
-                            print(
-                                f"  Updated target network at step {self.total_steps}"
-                            )
+            # Decay epsilon after each episode
+            self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
 
-                    if terminated or truncated:
-                        break
+            # Calculate average loss if we did any training steps
+            avg_loss = episode_loss / max(1, train_steps)
+            rewards_history.append(total_reward)
+            success_history.append(1.0 if episode_success else 0.0)
 
-                # Decay epsilon after each episode
-                self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+            # Log less frequently to speed up training
+            if (episode + 1) % 10 == 0:
+                recent_rewards = rewards_history[-min(10, len(rewards_history)) :]
+                recent_success = success_history[-min(10, len(success_history)) :]
+                avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
+                success_rate = sum(recent_success) / len(recent_success) * 100
 
-                # Calculate average loss if we did any training steps
-                avg_loss = episode_loss / max(1, train_steps)
-                rewards_history.append(total_reward)
+                print(
+                    f"Episode {episode + 1}/{episodes}, "
+                    f"Shaped Reward: {total_reward:.4f}, "
+                    f"Original Reward: {original_reward_sum:.2f}, "
+                    f"Success Rate: {success_rate:.1f}%, "
+                    f"Avg Loss: {avg_loss:.4f}, "
+                    f"Epsilon: {self.epsilon:.3f}"
+                )
 
-                # Log less frequently to speed up training
-                if (episode + 1) % 100 == 0:
-                    recent_rewards = rewards_history[-min(10, len(rewards_history)) :]
-                    avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
-                    print(
-                        f"Episode {episode + 1}/{episodes}, "
-                        f"Total Reward: {total_reward:.4f}, "
-                        f"Avg Recent Reward: {avg_recent_reward:.4f}, "
-                        f"Avg Loss: {avg_loss:.4f}, "
-                        f"Epsilon: {self.epsilon:.3f}"
-                    )
+                # Early stopping check - use success rate instead of just rewards
+                if success_rate > best_reward:
+                    best_reward = success_rate
+                    no_improvement_count = 0
 
-                    # Early stopping check
-                    if avg_recent_reward > best_reward:
-                        best_reward = avg_recent_reward
+                    # Save best model if significantly better, check success rate
+                    if (
+                        len(success_history) >= 10
+                        and success_rate > self.best_avg_reward
+                    ):
+                        self.best_avg_reward = success_rate
+                        best_model_path = os.path.join(
+                            self.checkpoint_dir, "best_model.pth"
+                        )
+                        torch.save(
+                            {
+                                "model_state_dict": self.model.state_dict(),
+                                "optimizer_state_dict": self.optimizer.state_dict(),
+                                "epsilon": self.epsilon,
+                                "episode": episode,
+                                "total_steps": self.total_steps,
+                                "avg_reward": success_rate,
+                                "env_info": self.env_info,
+                            },
+                            best_model_path,
+                        )
+                        print(
+                            f"New best model saved with success rate: {success_rate:.1f}%"
+                        )
+                else:
+                    no_improvement_count += 1
+
+                    # If no improvement for a while, reduce learning rate
+                    if no_improvement_count >= 5:
+                        for param_group in self.optimizer.param_groups:
+                            param_group["lr"] *= 0.8
+                        print(
+                            f"Reducing learning rate to {self.optimizer.param_groups[0]['lr']:.6f}"
+                        )
                         no_improvement_count = 0
 
-                        # Save best model if significantly better
-                        if (
-                            len(rewards_history) >= 10
-                            and avg_recent_reward > self.best_avg_reward
-                        ):
-                            self.best_avg_reward = avg_recent_reward
-                            best_model_path = os.path.join(
-                                self.checkpoint_dir, "best_model.pth"
-                            )
-                            torch.save(
-                                {
-                                    "model_state_dict": self.model.state_dict(),
-                                    "optimizer_state_dict": self.optimizer.state_dict(),
-                                    "epsilon": self.epsilon,
-                                    "episode": episode,
-                                    "total_steps": self.total_steps,
-                                    "avg_reward": avg_recent_reward,
-                                    "env_info": self.env_info,
-                                },
-                                best_model_path,
-                            )
-                            print(
-                                f"New best model saved with avg reward: {avg_recent_reward:.4f}"
-                            )
-                    else:
-                        no_improvement_count += 1
-
-                        # If no improvement for a while, reduce learning rate
-                        if no_improvement_count >= 5:
-                            for param_group in self.optimizer.param_groups:
-                                param_group["lr"] *= 0.8
-                            print(
-                                f"Reducing learning rate to {self.optimizer.param_groups[0]['lr']:.6f}"
-                            )
-                            no_improvement_count = 0
-
-                # Save checkpoint less frequently to speed up training
-                if (episode + 1) % self.checkpoint_interval == 0:
-                    checkpoint_path = os.path.join(
-                        self.checkpoint_dir, f"model_checkpoint_{episode+1}.pth"
-                    )
-                    torch.save(
-                        {
-                            "model_state_dict": self.model.state_dict(),
-                            "optimizer_state_dict": self.optimizer.state_dict(),
-                            "epsilon": self.epsilon,
-                            "episode": episode,
-                            "total_steps": self.total_steps,
-                        },
-                        checkpoint_path,
-                    )
-                    print(f"Saved checkpoint: {checkpoint_path}")
-
-                    # Plot learning curve at checkpoints
-                    if len(rewards_history) > 0:
-                        plt.figure(figsize=(10, 5))
-                        plt.plot(rewards_history)
-                        plt.title(f"Learning Curve (Episode {episode+1})")
-                        plt.xlabel("Episode")
-                        plt.ylabel("Total Reward")
-                        plt.savefig(
-                            os.path.join(
-                                self.checkpoint_dir, f"learning_curve_{episode+1}.png"
-                            )
-                        )
-                        plt.close()
-
-                # Periodically clean up GPU memory to prevent leaks
-                if torch.cuda.is_available() and episode % memory_cleanup_freq == 0:
-                    torch.cuda.empty_cache()
-                    # Print memory stats every 500 episodes
-                    if verbose:
-                        allocated = torch.cuda.memory_allocated() / (1024 * 1024)
-                        max_allocated = torch.cuda.max_memory_allocated() / (
-                            1024 * 1024
-                        )
-                        reserved = torch.cuda.memory_reserved() / (1024 * 1024)
-                        print(
-                            f"  GPU Memory: Current={allocated:.1f}MB, Peak={max_allocated:.1f}MB, Reserved={reserved:.1f}MB"
-                        )
-
-                # Clean up replay buffer for old tasks periodically
-                if episode % replay_buffer_cleanup_freq == 0 and episode > 0:
-                    # Keep only the current task and at most 4 previous tasks
-                    if len(self.replay_buffer) > 5:
-                        current_tasks = list(self.replay_buffer.keys())
-                        tasks_to_keep = [task_id]  # Always keep current task
-
-                        # Add up to 4 most recent other tasks
-                        other_tasks = [t for t in current_tasks if t != task_id]
-                        tasks_to_keep.extend(other_tasks[-4:])
-
-                        # Remove old tasks
-                        for t in list(self.replay_buffer.keys()):
-                            if t not in tasks_to_keep:
-                                del self.replay_buffer[t]
-
-                        if verbose:
-                            print(
-                                f"  Cleaned replay buffer: keeping {len(tasks_to_keep)} tasks, removed {len(current_tasks) - len(tasks_to_keep)} old tasks"
-                            )
-                            print(
-                                f"  Current replay buffer size: {sum(len(self.replay_buffer[t]['experiences']) for t in self.replay_buffer)} experiences"
-                            )
-
-        except Exception as e:
-            print(f"Training interrupted: {e}")
-            # Save emergency checkpoint if training fails
-            emergency_path = os.path.join(self.checkpoint_dir, "emergency_model.pth")
-            try:
+            # Save checkpoint less frequently to speed up training
+            if (episode + 1) % self.checkpoint_interval == 0:
+                checkpoint_path = os.path.join(
+                    self.checkpoint_dir, f"model_checkpoint_{episode+1}.pth"
+                )
                 torch.save(
                     {
                         "model_state_dict": self.model.state_dict(),
                         "optimizer_state_dict": self.optimizer.state_dict(),
                         "epsilon": self.epsilon,
-                        "episode": episode if "episode" in locals() else 0,
+                        "episode": episode,
                         "total_steps": self.total_steps,
                     },
-                    emergency_path,
+                    checkpoint_path,
                 )
-                print(f"Emergency checkpoint saved: {emergency_path}")
-            except:
-                print("Failed to save emergency checkpoint")
+                print(f"Saved checkpoint: {checkpoint_path}")
 
-            # Always try to clean up GPU memory when exiting
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                # Plot learning curve at checkpoints
+                if len(rewards_history) > 0:
+                    plt.figure(figsize=(12, 8))
 
-        # Final memory cleanup
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+                    # Plot both reward and success rate
+                    plt.subplot(2, 1, 1)
+                    plt.plot(rewards_history)
+                    plt.title(f"Learning Curve - Rewards (Episode {episode+1})")
+                    plt.ylabel("Shaped Reward")
+
+                    # Calculate moving average of success rate
+                    if len(success_history) > 100:
+                        window_size = 100
+                        success_moving_avg = [
+                            sum(success_history[i : i + window_size]) / window_size
+                            for i in range(len(success_history) - window_size + 1)
+                        ]
+
+                        plt.subplot(2, 1, 2)
+                        plt.plot(
+                            range(window_size - 1, episode + 1), success_moving_avg
+                        )
+                        plt.title(
+                            f"Success Rate (Moving Average, Window={window_size})"
+                        )
+                        plt.xlabel("Episode")
+                        plt.ylabel("Success Rate")
+
+                    plt.tight_layout()
+                    plt.savefig(
+                        os.path.join(
+                            self.checkpoint_dir, f"learning_curve_{episode+1}.png"
+                        )
+                    )
+                    plt.close()
 
     def test(self, episodes=None, render=False):
-        """Test the agent's performance over multiple episodes"""
+        """Test the agent's performance over multiple episodes using only unmodified rewards"""
         if episodes is None:
             episodes = self.episodes
 
         total_rewards = []
         success_count = 0
+        steps_to_success = []
+        task_success_rates = {}
 
         for episode in range(episodes):
             obs, info = self.env.reset()
@@ -1188,6 +859,12 @@ class DQNAgent:
             self.current_hint = ""
             # Initialize previous room tracking for this episode
             self.prev_room = info["symbolic_state"]["agent"]["room"]
+
+            # Track current task
+            current_task = self.env.task
+            if current_task not in task_success_rates:
+                task_success_rates[current_task] = {"attempts": 0, "successes": 0}
+            task_success_rates[current_task]["attempts"] += 1
 
             total_reward = 0
             episode_success = False
@@ -1197,15 +874,22 @@ class DQNAgent:
                 action, cost, state = self.choose_action(state, obs, info)
                 obs, reward, terminated, truncated, info = self.env.step(action)
 
-                # Track success
-                if reward > 0:
+                # Use original rewards for evaluation, not shaped rewards
+                original_reward = reward
+
+                # Track success without using shaped rewards
+                if original_reward > 0:
                     self.current_hint = ""
                     episode_success = True
+                    steps_to_success.append(step)
+                    # Track task-specific success
+                    task_success_rates[current_task]["successes"] += 1
 
-                reward -= cost
+                # Just subtract the cost from the original reward
+                reward = original_reward - cost
                 total_reward += reward
 
-                # Update previous room
+                # Update previous room for tracking only
                 self.prev_room = info["symbolic_state"]["agent"]["room"]
 
                 if render:
@@ -1220,20 +904,73 @@ class DQNAgent:
                 success_count += 1
 
             # Log progress periodically
-            if episode % 1000 == 0 or episode == episodes - 1:
+            if episode % 100 == 0 or episode == episodes - 1:
                 success_rate = success_count / (episode + 1) * 100
+                avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
                 print(
                     f"Test Episode {episode+1}/{episodes}, "
                     f"Reward: {total_reward:.4f}, "
-                    f"Success Rate: {success_rate:.1f}%"
+                    f"Success Rate: {success_rate:.1f}%, "
+                    f"Avg Steps to Success: {avg_steps}"
                 )
 
         # Calculate final metrics
         average_reward = sum(total_rewards) / max(1, len(total_rewards))
         final_success_rate = success_count / max(1, len(total_rewards)) * 100
 
+        # Calculate average steps to success
+        avg_steps_to_success = np.mean(steps_to_success) if steps_to_success else "N/A"
+
         print(f"\nTest Results over {len(total_rewards)} episodes:")
         print(f"  Average Reward: {average_reward:.4f}")
         print(f"  Success Rate: {final_success_rate:.1f}%")
+        print(f"  Average Steps to Success: {avg_steps_to_success}")
 
-        return average_reward
+        # Print task-specific success rates
+        print("\nTask-specific success rates:")
+        for task, stats in task_success_rates.items():
+            task_success_rate = (
+                (stats["successes"] / stats["attempts"]) * 100
+                if stats["attempts"] > 0
+                else 0
+            )
+            print(
+                f"  {task}: {task_success_rate:.1f}% ({stats['successes']}/{stats['attempts']})"
+            )
+
+        # Save test results to a file
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_file = os.path.join(
+            self.checkpoint_dir, f"test_results_{timestamp}.json"
+        )
+
+        results = {
+            "average_reward": float(average_reward),
+            "success_rate": float(final_success_rate),
+            "average_steps_to_success": (
+                float(avg_steps_to_success)
+                if isinstance(avg_steps_to_success, (int, float))
+                else None
+            ),
+            "task_success_rates": {
+                task: {
+                    "success_rate": (
+                        (stats["successes"] / stats["attempts"]) * 100
+                        if stats["attempts"] > 0
+                        else 0
+                    ),
+                    "successes": stats["successes"],
+                    "attempts": stats["attempts"],
+                }
+                for task, stats in task_success_rates.items()
+            },
+            "timestamp": timestamp,
+            "episodes": episodes,
+        }
+
+        with open(results_file, "w") as f:
+            json.dump(results, f, indent=4)
+
+        print(f"\nTest results saved to: {results_file}")
+
+        return average_reward, final_success_rate
