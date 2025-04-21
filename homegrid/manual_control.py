@@ -9,27 +9,27 @@ tok = Tokenizer.from_pretrained("t5-small")
 from homegrid.DQN import DQNAgent
 from pprint import pprint
 
-agent = None
-prev_distance = None
+# agent = None
+# prev_distance = None
 
 def redraw(window, img):
     window.show_img(img)
 
 def reset(env, window, seed=None, agent_view=False):
     obs, info = env.reset()
-    pprint(info)
+    # pprint(info)
     img = obs["image"] if agent_view else env.get_frame()
     redraw(window, img)
-    global agent, prev_distance
-    agent = DQNAgent(env_name="homegrid-task", episodes=0)
-    agent.env = env
-    prev_distance = agent.compute_distance(info)
+    # global agent, prev_distance
+    # agent = DQNAgent(env_name="homegrid-task", episodes=0)
+    # agent.env = env
+    # prev_distance = agent.compute_distance(info)
 
 
 def step(env, window, action, agent_view=False):
     obs, reward, terminated, truncated, info = env.step(action)
-    global prev_distance
-    reward, prev_distance = agent.shaped_reward(reward, info, prev_distance)
+    # global prev_distance
+    # reward, prev_distance = agent.shaped_reward(reward, info, prev_distance)
     print(info["symbolic_state"])
     token = tok.decode([obs["token"]])
     print(f"step={env.step_cnt}, reward={reward:.2f}")
