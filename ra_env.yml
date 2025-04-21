@@ -1,22 +1,18 @@
 name: RA_env
 channels:
-  - conda-forge
-  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
 dependencies:
-  - python=3.9
-  - pip
-  - numpy
-  - matplotlib
   - gym
+  - matplotlib
+  - numpy
+  - pip
+  - python=3.9
   - pytorch
-  - torchvision
   - torchaudio
+  - torchvision
   - tqdm
   - pillow
   - requests
-  - pip:
-      - spacy
-      - homegrid
-      - openai
-      - jsonpickle
-      - transformers
+  - black
+prefix: /opt/anaconda3/envs/RA_env
