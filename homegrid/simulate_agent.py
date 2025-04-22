@@ -73,12 +73,14 @@ class AgentSimulator:
         if torch.cuda.is_available():
             torch.cuda.set_per_process_memory_fraction(0.45)
 
-        agent = DQNAgent(env_name=self.env.unwrapped.spec.id)
-        agent.env = self.env  # Connect agent to environment
-
         # Create directory paths
         checkpoint_dir = f"checkpoints{self.checkpoint_number}"
         training_dir = os.path.join(checkpoint_dir, "training")
+
+        agent = DQNAgent(
+            env_name=self.env.unwrapped.spec.id, checkpoint_dir=checkpoint_dir
+        )
+        agent.env = self.env  # Connect agent to environment
 
         # Handle different checkpoint formats
         if isinstance(model_path, int):

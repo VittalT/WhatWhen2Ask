@@ -9,32 +9,6 @@ import multiprocessing
 from datetime import datetime
 import sys
 
-# Check for GPU availability
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
-
-# Limit GPU memory usage to approximately 45% of allocation
-if torch.cuda.is_available():
-    # Get total GPU memory
-    total_mem = torch.cuda.get_device_properties(0).total_memory
-    # Set to use only 45% of available memory
-    torch.cuda.set_per_process_memory_fraction(0.45)
-    print(f"Limiting GPU memory usage to 45% of {total_mem/1e9:.2f} GB")
-
-# Use a consistent checkpoint directory
-checkpoint_dir = "checkpoints10"
-os.makedirs(checkpoint_dir, exist_ok=True)
-
-# Create separate folders for training and testing outputs
-training_dir = os.path.join(checkpoint_dir, "training")
-testing_dir = os.path.join(checkpoint_dir, "testing")
-os.makedirs(training_dir, exist_ok=True)
-os.makedirs(testing_dir, exist_ok=True)
-
-# Set up logging to capture terminal output
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(testing_dir, f"terminal_output_{timestamp}.txt")
-
 
 # Create a function to log output to both console and file
 class Logger:
@@ -50,18 +24,6 @@ class Logger:
     def flush(self):
         self.terminal.flush()
         self.log.flush()
-
-
-# Redirect stdout to our Logger
-sys.stdout = Logger(log_file)
-
-# GPU optimization parameters
-num_workers = min(
-    8, multiprocessing.cpu_count()
-)  # Use up to 8 worker threads for data loading
-batch_size_multiplier = (
-    2 if torch.cuda.is_available() else 1
-)  # Increase batch size on GPU
 
 
 def load_agent(
@@ -86,7 +48,9 @@ def load_agent(
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
 
-    agent = DQNAgent(env_name=env_name, episodes=episodes)
+    agent = DQNAgent(
+        env_name=env_name, episodes=episodes, checkpoint_dir=checkpoint_dir
+    )
 
     # Adjust batch size for better GPU utilization
     if torch.cuda.is_available() and use_gpu:
@@ -360,7 +324,9 @@ def evaluate_checkpoints(
 
     # Test untrained baseline first
     print("\nEvaluating baseline (untrained) agent...")
-    baseline_agent = DQNAgent()  # Create a new agent with random initialization
+    baseline_agent = DQNAgent(
+        checkpoint_dir=checkpoint_dir
+    )  # Create a new agent with random initialization
     start_time = time.time()
     baseline_original_reward, baseline_shaped_reward = baseline_agent.test(
         episodes=test_episodes
@@ -387,7 +353,7 @@ def evaluate_checkpoints(
             torch.cuda.empty_cache()
 
         # Explicitly load checkpoint with weights_only=False
-        agent = DQNAgent(env_name="homegrid-task")
+        agent = DQNAgent(env_name="homegrid-task", checkpoint_dir=checkpoint_dir)
         checkpoint = torch.load(
             checkpoint_path, map_location=device, weights_only=False
         )
@@ -425,7 +391,7 @@ def evaluate_checkpoints(
             torch.cuda.empty_cache()
 
         # Explicitly load best model with weights_only=False
-        best_agent = DQNAgent(env_name="homegrid-task")
+        best_agent = DQNAgent(env_name="homegrid-task", checkpoint_dir=checkpoint_dir)
         checkpoint = torch.load(best_path, map_location=device, weights_only=False)
         best_agent.model.load_state_dict(checkpoint["model_state_dict"])
         if "optimizer_state_dict" in checkpoint:
@@ -623,7 +589,7 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     print("=" * 60)
 
     # Initialize a fresh agent for benchmarking
-    benchmark_agent = DQNAgent()
+    benchmark_agent = DQNAgent(checkpoint_dir=checkpoint_dir)
     if use_gpu and torch.cuda.is_available():
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
         # Warm up the GPU to ensure accurate timing
@@ -719,6 +685,48 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     return results
 
 
+# ===========================================
+# GLOBAL CONFIGURATION - Easy to modify
+# ===========================================
+
+# Check for GPU availability
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Limit GPU memory usage to approximately 45% of allocation
+if torch.cuda.is_available():
+    # Get total GPU memory
+    total_mem = torch.cuda.get_device_properties(0).total_memory
+    # Set to use only 45% of available memory
+    torch.cuda.set_per_process_memory_fraction(0.45)
+    print(f"Limiting GPU memory usage to 45% of {total_mem/1e9:.2f} GB")
+
+# GPU optimization parameters
+num_workers = min(
+    8, multiprocessing.cpu_count()
+)  # Use up to 8 worker threads for data loading
+batch_size_multiplier = (
+    2 if torch.cuda.is_available() else 1
+)  # Increase batch size on GPU
+
+# Generate timestamp for file naming
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+checkpoint_dir = "checkpoints11"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+
+
+os.makedirs(checkpoint_dir, exist_ok=True)
+training_dir = os.path.join(checkpoint_dir, "training")
+testing_dir = os.path.join(checkpoint_dir, "testing")
+os.makedirs(training_dir, exist_ok=True)
+os.makedirs(testing_dir, exist_ok=True)
+
+# Set up logging to capture terminal output
+log_file = os.path.join(testing_dir, f"terminal_output_{timestamp}.txt")
+sys.stdout = Logger(log_file)
+
+
 if __name__ == "__main__":
     # Print GPU information if available
     if torch.cuda.is_available():
@@ -773,7 +781,7 @@ if __name__ == "__main__":
     )
     """
 
-    # OPTION 3: Evaluate multiple checkpoints to create a learning curve
+    # OPTION 3: Test code quickly to check it doesnt break
     # Uncomment to use:
 
     train_agent(
@@ -792,13 +800,30 @@ if __name__ == "__main__":
         use_gpu=True,
     )
 
-    # test_agent(
-    #     checkpoint="best",
-    #     num_episodes=100,
-    #     use_gpu=True
-    # )
+    test_agent(checkpoint="best", num_episodes=100, use_gpu=True)
 
-    # OPTION 4: Quick test of a specific checkpoint
+    # OPTION 4: Evaluate multiple checkpoints to create a learning curve
+    # Uncomment to use:
+
+    """
+    train_agent(
+        num_episodes=6000,
+        save_interval=500,
+        use_gpu=True,
+    )
+
+    evaluate_checkpoints(
+        checkpoint_range=(
+            2000,
+            6000,
+            2000,
+        ),
+        test_episodes=5000,
+        use_gpu=True,
+    )
+    """
+
+    # OPTION 5: Quick test of a specific checkpoint
     # Uncomment to use:
     """
     test_agent(
@@ -809,7 +834,7 @@ if __name__ == "__main__":
     )
     """
 
-    # OPTION 5: Run a quick benchmark to estimate runtime for larger training
+    # OPTION 6: Run a quick benchmark to estimate runtime for larger training
     # Uncomment to use:
     """
     benchmark_performance(

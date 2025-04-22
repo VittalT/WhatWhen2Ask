@@ -120,7 +120,8 @@ class DQN(nn.Module):
 
 
 class DQNAgent:
-    def __init__(self, env_name="homegrid-task", episodes=500):
+    def __init__(self, env_name="homegrid-task", episodes=500, checkpoint_dir=None):
+        assert checkpoint_dir is not None, "checkpoint_dir must be provided"
         # Check if CUDA is available and set the device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
@@ -184,7 +185,7 @@ class DQNAgent:
         # Checkpoint interval (save model every N episodes)
         self.checkpoint_interval = 250
         # Directory to save checkpoints
-        self.checkpoint_dir = "checkpoints10"
+        self.checkpoint_dir = checkpoint_dir
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Create separate folders for training and testing outputs
