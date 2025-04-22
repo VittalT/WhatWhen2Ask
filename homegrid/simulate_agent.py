@@ -10,6 +10,7 @@ from homegrid.window import Window
 from homegrid.DQN import DQNAgent, get_fasttext_embedding
 from tokenizers import Tokenizer
 import argparse
+import os
 
 tok = Tokenizer.from_pretrained("t5-small")
 
@@ -70,32 +71,48 @@ class AgentSimulator:
         agent = DQNAgent(env_name=self.env.unwrapped.spec.id)
         agent.env = self.env  # Connect agent to environment
 
+        # Create directory paths
+        checkpoint_dir = f"checkpoints{self.checkpoint_number}"
+        training_dir = os.path.join(checkpoint_dir, "training")
+
         # Handle different checkpoint formats
         if isinstance(model_path, int):
-            checkpoint_path = (
-                f"checkpoints{self.checkpoint_number}/model_checkpoint_{model_path}.pth"
+            checkpoint_path = os.path.join(
+                training_dir, f"model_checkpoint_{model_path}.pth"
             )
         elif model_path.lower() == "best":
-            checkpoint_path = f"checkpoints{self.checkpoint_number}/best_model.pth"
+            checkpoint_path = os.path.join(training_dir, "best_model.pth")
         elif model_path.lower() == "final":
-            checkpoint_path = f"checkpoints{self.checkpoint_number}/final_model.pth"
+            # Look for the most recent final model
+            final_models = []
+            final_models.extend(
+                [
+                    os.path.join(training_dir, f)
+                    for f in os.listdir(training_dir)
+                    if f.startswith("final_model_") and f.endswith(".pth")
+                ]
+            )
+
+            if final_models:
+                # Sort by modification time, newest first
+                checkpoint_path = sorted(
+                    final_models, key=os.path.getmtime, reverse=True
+                )[0]
+            else:
+                print(f"No final model found in {training_dir}")
+                return agent
         else:
             checkpoint_path = model_path
 
         print(f"Loading model from: {checkpoint_path}")
         checkpoint = torch.load(checkpoint_path, map_location=device)
-        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-            agent.model.load_state_dict(checkpoint["model_state_dict"])
-            if "epsilon" in checkpoint:
-                agent.epsilon = checkpoint["epsilon"]
-            print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
-        else:
-            # Legacy format
-            agent.model.load_state_dict(checkpoint)
+        agent.model.load_state_dict(checkpoint["model_state_dict"])
+        if "epsilon" in checkpoint:
+            agent.epsilon = checkpoint["epsilon"]
+        print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
 
         # Set to evaluation mode
         agent.model.eval()
-        # Always disable exploration for visualization
         return agent
 
     def setup_visualization(self):
