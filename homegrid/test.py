@@ -14,7 +14,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Use a consistent checkpoint directory
-checkpoint_dir = "checkpoints9"
+checkpoint_dir = "checkpoints10"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Create a log directory for tracking metrics
@@ -101,33 +101,27 @@ def load_agent(
 
         if os.path.exists(checkpoint_path):
             print(f"Loading checkpoint: {checkpoint_path}")
-            try:
-                # Handle different checkpoint formats - load to correct device
-                checkpoint = torch.load(checkpoint_path, map_location=device)
-                if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
-                    agent.model.load_state_dict(checkpoint["model_state_dict"])
-                    if "optimizer_state_dict" in checkpoint:
-                        agent.optimizer.load_state_dict(
-                            checkpoint["optimizer_state_dict"]
-                        )
-                    if "epsilon" in checkpoint:
-                        agent.epsilon = checkpoint["epsilon"]
-                    if "total_steps" in checkpoint:
-                        agent.total_steps = checkpoint["total_steps"]
-                    print(
-                        f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
-                    )
-                else:
-                    # Legacy format (just model state dict)
-                    agent.model.load_state_dict(checkpoint)
-                    print(f"Loaded legacy checkpoint format (only model weights)")
+            # Handle different checkpoint formats - load to correct device
+            checkpoint = torch.load(checkpoint_path, map_location=device)
+            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+                agent.model.load_state_dict(checkpoint["model_state_dict"])
+                if "optimizer_state_dict" in checkpoint:
+                    agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+                if "epsilon" in checkpoint:
+                    agent.epsilon = checkpoint["epsilon"]
+                if "total_steps" in checkpoint:
+                    agent.total_steps = checkpoint["total_steps"]
+                print(
+                    f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
+                )
+            else:
+                # Legacy format (just model state dict)
+                agent.model.load_state_dict(checkpoint)
+                print(f"Loaded legacy checkpoint format (only model weights)")
 
-                # Make sure the target network is synced
-                agent.update_target_network()
-                return agent
-            except Exception as e:
-                print(f"Error loading checkpoint: {e}")
-                print("Creating new agent with random initialization")
+            # Make sure the target network is synced
+            agent.update_target_network()
+            return agent
         else:
             print(f"Checkpoint file not found: {checkpoint_path}")
             print("Creating new agent with random initialization")
@@ -729,19 +723,25 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     train_agent(
-        num_episodes=5000,  # Train on 5K episodes
-        save_interval=500,  # Save checkpoints every 500 episodes
+        num_episodes=10,  # Train on 5K episodes
+        save_interval=5,  # Save checkpoints every 500 episodes
         use_gpu=True,  # Use GPU acceleration
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            500,
-            5000,
-            500,
+            5,
+            10,
+            5,
         ),  # Test models from episode 500 to 5K, every 500 episodes
-        test_episodes=30000,  # Test each checkpoint on 30K episodes
+        test_episodes=100,  # Test each checkpoint on 30K episodes
         use_gpu=True,  # Use GPU for faster evaluation
+    )
+
+    test_agent(
+        checkpoint="best",  # Test the final model after continued training
+        num_episodes=100,  # Test on 1000 episodes
+        use_gpu=True,  # Use GPU for faster testing
     )
 
     # OPTION 4: Quick test of a specific checkpoint

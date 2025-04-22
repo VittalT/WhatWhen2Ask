@@ -155,6 +155,7 @@ class DQNAgent:
 
         # Reward shaping weight
         self.distance_weight = 0.01
+        self.additional_weight = 0.2
 
         # Track previous room for room change bonus
         self.prev_room = None
@@ -182,7 +183,7 @@ class DQNAgent:
         # Checkpoint interval (save model every N episodes)
         self.checkpoint_interval = 250
         # Directory to save checkpoints
-        self.checkpoint_dir = "checkpoints9"
+        self.checkpoint_dir = "checkpoints10"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
         # Performance tracking
@@ -319,13 +320,9 @@ class DQNAgent:
                 continue
 
                 # Calculate basic distance
-                # try:
             euclidean_dist = np.linalg.norm(
                 np.array(agent_pos, dtype=float) - np.array(obj_pos, dtype=float)
             )
-            # except:
-            #     # Fallback if positions are invalid
-            #     euclidean_dist = 10.0
 
             # Add room penalty if object is in a different room
             room_penalty = 5 if obj_room and obj_room != agent_room else 0
@@ -431,7 +428,7 @@ class DQNAgent:
             shaped_reward = (
                 base_reward
                 + (self.distance_weight * distance_reward)
-                + additional_reward
+                + (self.additional_weight * additional_reward)
             )
 
         # Update previous room for next step
@@ -493,10 +490,7 @@ class DQNAgent:
         if error is None:
             max_priority = 1.0
             if self.replay_buffer[task_id]["priorities"]:
-                try:
-                    max_priority = max(self.replay_buffer[task_id]["priorities"])
-                except:
-                    max_priority = 1.0
+                max_priority = max(self.replay_buffer[task_id]["priorities"])
             self.replay_buffer[task_id]["priorities"].append(max_priority)
         else:
             # Priority based on TD error
@@ -555,14 +549,10 @@ class DQNAgent:
             #     return batch, None, None
         else:
             # Uniform sampling if PER is disabled or sizes don't match
-            # try:
             batch = random.sample(
                 list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
             )
             return batch, None, None
-        # except:
-        #     print(f"Sampling error, buffer size: {buffer_size}")
-        #     return None, None, None
 
     def update_priorities(self, task_id, indices, td_errors):
         """Update priorities in the replay buffer based on TD errors"""
