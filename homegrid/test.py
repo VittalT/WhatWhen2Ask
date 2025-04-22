@@ -728,25 +728,19 @@ if __name__ == "__main__":
     # OPTION 3: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=10,  # Train on 10K episodes
-    #     save_interval=5,  # Save checkpoints every 500 episodes
-    #     use_gpu=True,  # Use GPU acceleration
-    # )
-
-    test_agent(
-        checkpoint="best",  # Test the best model saved during training
-        num_episodes=100,  # 10K test episodes
-        use_gpu=True,  # Use GPU for faster testing
+    train_agent(
+        num_episodes=5000,  # Train on 5K episodes
+        save_interval=500,  # Save checkpoints every 500 episodes
+        use_gpu=True,  # Use GPU acceleration
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            5,
-            10,
-            5,
-        ),  # Test models from episode 1K to 10K, every 1K episodes
-        test_episodes=100,  # Test each checkpoint on 10K episodes
+            500,
+            5000,
+            500,
+        ),  # Test models from episode 500 to 5K, every 500 episodes
+        test_episodes=30000,  # Test each checkpoint on 30K episodes
         use_gpu=True,  # Use GPU for faster evaluation
     )
 
