@@ -13,6 +13,14 @@ import sys
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# Limit GPU memory usage to approximately 45% of allocation
+if torch.cuda.is_available():
+    # Get total GPU memory
+    total_mem = torch.cuda.get_device_properties(0).total_memory
+    # Set to use only 45% of available memory
+    torch.cuda.set_per_process_memory_fraction(0.45)
+    print(f"Limiting GPU memory usage to 45% of {total_mem/1e9:.2f} GB")
+
 # Use a consistent checkpoint directory
 checkpoint_dir = "checkpoints10"
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -354,12 +362,17 @@ def evaluate_checkpoints(
     print("\nEvaluating baseline (untrained) agent...")
     baseline_agent = DQNAgent()  # Create a new agent with random initialization
     start_time = time.time()
-    baseline_score, baseline_success_rate = baseline_agent.test(episodes=test_episodes)
+    baseline_original_reward, baseline_shaped_reward = baseline_agent.test(
+        episodes=test_episodes
+    )
     baseline_time = time.time() - start_time
     print(
-        f"Baseline average reward: {baseline_score:.4f}, Success Rate: {baseline_success_rate:.1f}% (time: {baseline_time:.1f}s)"
+        f"Baseline original reward: {baseline_original_reward:.4f}, Shaped reward: {baseline_shaped_reward:.4f} (time: {baseline_time:.1f}s)"
     )
-    results[0] = {"reward": baseline_score, "success_rate": baseline_success_rate}
+    results[0] = {
+        "original_reward": baseline_original_reward,
+        "shaped_reward": baseline_shaped_reward,
+    }
 
     # Test each checkpoint
     checkpoints_tested = 0
@@ -367,42 +380,42 @@ def evaluate_checkpoints(
 
     for episode in range(start, end + 1, step):
         checkpoint_path = os.path.join(training_dir, f"model_checkpoint_{episode}.pth")
-        if os.path.exists(checkpoint_path):
-            print(f"\nEvaluating checkpoint at episode {episode}...")
+        print(f"\nEvaluating checkpoint at episode {episode}...")
 
-            # Clean up memory between checkpoints
-            if use_gpu and torch.cuda.is_available():
-                torch.cuda.empty_cache()
+        # Clean up memory between checkpoints
+        if use_gpu and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
-            # Explicitly load checkpoint with weights_only=False
-            agent = DQNAgent(env_name="homegrid-task")
-            checkpoint = torch.load(
-                checkpoint_path, map_location=device, weights_only=False
-            )
-            agent.model.load_state_dict(checkpoint["model_state_dict"])
-            if "optimizer_state_dict" in checkpoint:
-                agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            if "epsilon" in checkpoint:
-                agent.epsilon = checkpoint["epsilon"]
-            if "total_steps" in checkpoint:
-                agent.total_steps = checkpoint["total_steps"]
-            agent.update_target_network()
+        # Explicitly load checkpoint with weights_only=False
+        agent = DQNAgent(env_name="homegrid-task")
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        agent.model.load_state_dict(checkpoint["model_state_dict"])
+        if "optimizer_state_dict" in checkpoint:
+            agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "epsilon" in checkpoint:
+            agent.epsilon = checkpoint["epsilon"]
+        if "total_steps" in checkpoint:
+            agent.total_steps = checkpoint["total_steps"]
+        agent.update_target_network()
 
-            # Run test
-            checkpoint_start = time.time()
-            reward, success_rate = agent.test(episodes=test_episodes)
-            checkpoint_time = time.time() - checkpoint_start
-            total_eval_time += checkpoint_time
+        # Run test
+        checkpoint_start = time.time()
+        original_reward, shaped_reward = agent.test(episodes=test_episodes)
+        checkpoint_time = time.time() - checkpoint_start
+        total_eval_time += checkpoint_time
 
-            # Store results
-            results[episode] = {"reward": reward, "success_rate": success_rate}
-            checkpoints_tested += 1
+        # Store results
+        results[episode] = {
+            "original_reward": original_reward,
+            "shaped_reward": shaped_reward,
+        }
+        checkpoints_tested += 1
 
-            print(
-                f"Checkpoint {episode} average reward: {reward:.4f}, Success Rate: {success_rate:.1f}% (time: {checkpoint_time:.1f}s)"
-            )
-        else:
-            print(f"Checkpoint for episode {episode} not found, skipping")
+        print(
+            f"Checkpoint {episode} original reward: {original_reward:.4f}, Shaped reward: {shaped_reward:.4f} (time: {checkpoint_time:.1f}s)"
+        )
 
     # Also test best model if it exists
     best_path = os.path.join(training_dir, "best_model.pth")
@@ -425,13 +438,18 @@ def evaluate_checkpoints(
 
         # Run test
         best_start = time.time()
-        best_reward, best_success_rate = best_agent.test(episodes=test_episodes)
+        best_original_reward, best_shaped_reward = best_agent.test(
+            episodes=test_episodes
+        )
         best_time = time.time() - best_start
         total_eval_time += best_time
 
-        results["best"] = {"reward": best_reward, "success_rate": best_success_rate}
+        results["best"] = {
+            "original_reward": best_original_reward,
+            "shaped_reward": best_shaped_reward,
+        }
         print(
-            f"Best model average reward: {best_reward:.4f}, Success Rate: {best_success_rate:.1f}% (time: {best_time:.1f}s)"
+            f"Best model original reward: {best_original_reward:.4f}, Shaped reward: {best_shaped_reward:.4f} (time: {best_time:.1f}s)"
         )
 
     # Create learning curve plots for both reward and success rate
@@ -439,13 +457,15 @@ def evaluate_checkpoints(
     plt.style.use("ggplot")
 
     episodes = [e for e in results.keys() if isinstance(e, int)]
-    rewards = [results[e]["reward"] for e in episodes]
-    success_rates = [results[e]["success_rate"] for e in episodes]
+    original_rewards = [results[e]["original_reward"] for e in episodes]
+    shaped_rewards = [results[e]["shaped_reward"] for e in episodes]
 
     # Plot rewards
-    ax1.plot(episodes, rewards, "o-", linewidth=2, markersize=8, label="Checkpoints")
+    ax1.plot(
+        episodes, original_rewards, "o-", linewidth=2, markersize=8, label="Checkpoints"
+    )
     ax1.axhline(
-        y=results[0]["reward"],
+        y=results[0]["original_reward"],
         color="r",
         linestyle="--",
         linewidth=2,
@@ -454,7 +474,7 @@ def evaluate_checkpoints(
 
     if "best" in results:
         ax1.axhline(
-            y=results["best"]["reward"],
+            y=results["best"]["original_reward"],
             color="g",
             linestyle="--",
             linewidth=2,
@@ -462,15 +482,15 @@ def evaluate_checkpoints(
         )
 
     ax1.set_xlabel("Training Episodes", fontsize=14)
-    ax1.set_ylabel("Average Test Reward", fontsize=14)
-    ax1.set_title("Reward: Test Performance vs Training Episodes", fontsize=16)
+    ax1.set_ylabel("Average Test Original Reward", fontsize=14)
+    ax1.set_title("Original Reward: Test Performance vs Training Episodes", fontsize=16)
     ax1.legend(fontsize=12)
     ax1.grid(True, alpha=0.3)
 
-    # Plot success rates
+    # Plot shaped rewards
     ax2.plot(
         episodes,
-        success_rates,
+        shaped_rewards,
         "o-",
         linewidth=2,
         markersize=8,
@@ -478,7 +498,7 @@ def evaluate_checkpoints(
         label="Checkpoints",
     )
     ax2.axhline(
-        y=results[0]["success_rate"],
+        y=results[0]["shaped_reward"],
         color="r",
         linestyle="--",
         linewidth=2,
@@ -487,7 +507,7 @@ def evaluate_checkpoints(
 
     if "best" in results:
         ax2.axhline(
-            y=results["best"]["success_rate"],
+            y=results["best"]["shaped_reward"],
             color="g",
             linestyle="--",
             linewidth=2,
@@ -495,8 +515,8 @@ def evaluate_checkpoints(
         )
 
     ax2.set_xlabel("Training Episodes", fontsize=14)
-    ax2.set_ylabel("Success Rate (%)", fontsize=14)
-    ax2.set_title("Success Rate: Test Performance vs Training Episodes", fontsize=16)
+    ax2.set_ylabel("Average Test Shaped Reward", fontsize=14)
+    ax2.set_title("Shaped Reward: Test Performance vs Training Episodes", fontsize=16)
     ax2.legend(fontsize=12)
     ax2.grid(True, alpha=0.3)
 
@@ -506,8 +526,8 @@ def evaluate_checkpoints(
     for i, episode in enumerate(episodes):
         if i == 0 or i == len(episodes) - 1 or (i % 3 == 0 and len(episodes) > 6):
             ax1.annotate(
-                f"{rewards[i]:.3f}",
-                (episode, rewards[i]),
+                f"{original_rewards[i]:.3f}",
+                (episode, original_rewards[i]),
                 textcoords="offset points",
                 xytext=(0, 10),
                 ha="center",
@@ -515,8 +535,8 @@ def evaluate_checkpoints(
                 bbox=dict(boxstyle="round,pad=0.3", fc="yellow", alpha=0.3),
             )
             ax2.annotate(
-                f"{success_rates[i]:.1f}%",
-                (episode, success_rates[i]),
+                f"{shaped_rewards[i]:.3f}",
+                (episode, shaped_rewards[i]),
                 textcoords="offset points",
                 xytext=(0, 10),
                 ha="center",
@@ -563,8 +583,8 @@ def evaluate_checkpoints(
         "metadata": evaluation_metadata,
         "results": {
             str(k): {
-                "reward": float(v["reward"]),
-                "success_rate": float(v["success_rate"]),
+                "original_reward": float(v["original_reward"]),
+                "shaped_reward": float(v["shaped_reward"]),
             }
             for k, v in results.items()
         },
@@ -757,18 +777,18 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     train_agent(
-        num_episodes=6000,
-        save_interval=500,
+        num_episodes=10,
+        save_interval=5,
         use_gpu=True,
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            2000,
-            6000,
-            2000,
+            5,
+            10,
+            5,
         ),
-        test_episodes=10000,
+        test_episodes=100,
         use_gpu=True,
     )
 

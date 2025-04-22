@@ -648,7 +648,7 @@ class DQNAgent:
 
         # For tracking performance trends
         rewards_history = []
-        success_history = []
+        original_rewards_history = []  # Track original rewards instead of success rate
 
         # For tracking runtime
         training_start_time = time.time()
@@ -668,7 +668,6 @@ class DQNAgent:
             state = self.preprocess_state(obs, info)
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
-            episode_success = False
             prev_distance = self.compute_distance(info)
             task_id = self.env.task
             if task_id not in self.replay_buffer:
@@ -694,7 +693,6 @@ class DQNAgent:
 
                 # Track if we got a success reward
                 if reward > 0:
-                    episode_success = True
                     self.current_hint = ""
                     if verbose:
                         print(f"  Step {step}: Got reward {reward}! Success!")
@@ -704,8 +702,7 @@ class DQNAgent:
                     reward, info, prev_distance
                 )
                 shaped_reward -= cost
-                original_reward_sum += original_reward  # Track real rewards
-                original_reward_sum -= cost
+                original_reward -= cost
 
                 next_state = self.preprocess_state(obs, info)
 
@@ -715,6 +712,7 @@ class DQNAgent:
 
                 state = next_state
                 total_reward += shaped_reward
+                original_reward_sum += original_reward
 
                 # Train less frequently to speed up training (every 4 steps)
                 if self.total_steps % 4 == 0:
@@ -738,7 +736,7 @@ class DQNAgent:
             # Calculate average loss if we did any training steps
             avg_loss = episode_loss / max(1, train_steps)
             rewards_history.append(total_reward)
-            success_history.append(1.0 if episode_success else 0.0)
+            original_rewards_history.append(original_reward_sum)
 
             # Calculate episode runtime
             episode_time = time.time() - episode_start_time
@@ -748,9 +746,13 @@ class DQNAgent:
             # Log less frequently to speed up training
             if (episode + 1) % 100 == 0 or episode == 0 or episode == episodes - 1:
                 recent_rewards = rewards_history[-min(100, len(rewards_history)) :]
-                recent_success = success_history[-min(100, len(success_history)) :]
+                recent_original_rewards = original_rewards_history[
+                    -min(100, len(original_rewards_history)) :
+                ]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
-                success_rate = sum(recent_success) / len(recent_success) * 100
+                avg_recent_original_reward = sum(recent_original_rewards) / len(
+                    recent_original_rewards
+                )
 
                 print(
                     f"Episode {episode + 1}/{episodes}, "
@@ -758,7 +760,7 @@ class DQNAgent:
                     f"Shaped Reward: {total_reward:.4f}, "
                     f"Original Reward: {original_reward_sum:.2f}, "
                     f"Avg Recent Reward: {avg_recent_reward:.4f}, "
-                    f"Success Rate: {success_rate:.1f}%, "
+                    f"Avg Recent Original Reward: {avg_recent_original_reward:.4f}, "
                     f"Avg Loss: {avg_loss:.4f}, "
                     f"Epsilon: {self.epsilon:.3f}"
                 )
@@ -821,7 +823,7 @@ class DQNAgent:
                 if len(rewards_history) > 0:
                     plt.figure(figsize=(12, 8))
 
-                    # Plot both reward and success rate as moving averages
+                    # Plot both reward and original reward as moving averages
                     plt.subplot(2, 1, 1)
 
                     # Plot raw rewards in light color
@@ -847,23 +849,27 @@ class DQNAgent:
                     plt.ylabel("Shaped Reward")
                     plt.legend()
 
-                    # Calculate moving average of success rate
-                    if len(success_history) > 100:
+                    # Calculate moving average of original rewards
+                    if len(original_rewards_history) > 100:
                         window_size = 100
-                        success_moving_avg = [
-                            sum(success_history[i : i + window_size]) / window_size
-                            for i in range(len(success_history) - window_size + 1)
+                        original_reward_moving_avg = [
+                            sum(original_rewards_history[i : i + window_size])
+                            / window_size
+                            for i in range(
+                                len(original_rewards_history) - window_size + 1
+                            )
                         ]
 
                         plt.subplot(2, 1, 2)
                         plt.plot(
-                            range(window_size - 1, episode + 1), success_moving_avg
+                            range(window_size - 1, episode + 1),
+                            original_reward_moving_avg,
                         )
                         plt.title(
-                            f"Success Rate (Moving Average, Window={window_size})"
+                            f"Original Reward (Moving Average, Window={window_size})"
                         )
                         plt.xlabel("Episode")
-                        plt.ylabel("Success Rate")
+                        plt.ylabel("Original Reward")
 
                     plt.tight_layout()
                     plot_path = os.path.join(
@@ -873,12 +879,12 @@ class DQNAgent:
                     plt.close()
 
     def test(self, episodes=None, render=False):
-        """Test the agent's performance over multiple episodes using only unmodified rewards"""
+        """Test the agent's performance over multiple episodes using both original and shaped rewards"""
         if episodes is None:
             episodes = self.episodes
 
-        total_rewards = []
-        success_count = 0
+        total_rewards = []  # Original rewards
+        shaped_rewards = []  # Shaped rewards
         steps_to_success = []
         task_success_rates = {}
 
@@ -895,9 +901,10 @@ class DQNAgent:
                 task_success_rates[current_task] = {"attempts": 0, "successes": 0}
             task_success_rates[current_task]["attempts"] += 1
 
-            total_reward = 0
-            episode_success = False
+            total_reward = 0  # Original reward
+            total_shaped_reward = 0  # Shaped reward
             state = self.preprocess_state(obs, info)
+            prev_distance = self.compute_distance(info)
 
             for step in range(self.env.max_steps):
                 action, cost, state = self.choose_action(state, obs, info, testing=True)
@@ -906,14 +913,22 @@ class DQNAgent:
                 # Track success without using shaped rewards
                 if reward > 0:
                     self.current_hint = ""
-                    episode_success = True
                     steps_to_success.append(step)
                     # Track task-specific success
                     task_success_rates[current_task]["successes"] += 1
 
-                # Just subtract the cost from the original reward
-                reward -= cost
-                total_reward += reward
+                # Get shaped reward for tracking
+                shaped_reward, prev_distance, original_reward = self.shaped_reward(
+                    reward, info, prev_distance
+                )
+
+                # Subtract costs from both
+                shaped_reward -= cost
+                original_reward -= cost
+
+                # Track both types of rewards
+                total_reward += original_reward
+                total_shaped_reward += shaped_reward
 
                 # Update previous room for tracking only
                 self.prev_room = info["symbolic_state"]["agent"]["room"]
@@ -926,29 +941,37 @@ class DQNAgent:
 
             # Record results
             total_rewards.append(total_reward)
-            if episode_success:
-                success_count += 1
+            shaped_rewards.append(total_shaped_reward)
 
             # Log progress periodically
             if episode % 1000 == 0 or episode == episodes - 1:
-                success_rate = success_count / (episode + 1) * 100
+                success_rate = (
+                    task_success_rates[current_task]["successes"] / (episode + 1) * 100
+                )
                 avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
                 print(
                     f"Test Episode {episode+1}/{episodes}, "
-                    f"Reward: {total_reward:.4f}, "
+                    f"Original Reward: {total_reward:.4f}, "
+                    f"Shaped Reward: {total_shaped_reward:.4f}, "
                     f"Success Rate: {success_rate:.1f}%, "
                     f"Avg Steps to Success: {avg_steps}"
                 )
 
         # Calculate final metrics
         average_reward = sum(total_rewards) / max(1, len(total_rewards))
-        final_success_rate = success_count / max(1, len(total_rewards)) * 100
+        average_shaped_reward = sum(shaped_rewards) / max(1, len(shaped_rewards))
+
+        # Calculate success rate from task_success_rates
+        success_count = sum(stats["successes"] for stats in task_success_rates.values())
+        attempt_count = sum(stats["attempts"] for stats in task_success_rates.values())
+        final_success_rate = (success_count / max(1, attempt_count)) * 100
 
         # Calculate average steps to success
         avg_steps_to_success = np.mean(steps_to_success) if steps_to_success else "N/A"
 
         print(f"\nTest Results over {len(total_rewards)} episodes:")
-        print(f"  Average Reward: {average_reward:.4f}")
+        print(f"  Average Original Reward: {average_reward:.4f}")
+        print(f"  Average Shaped Reward: {average_shaped_reward:.4f}")
         print(f"  Success Rate: {final_success_rate:.1f}%")
         print(f"  Average Steps to Success: {avg_steps_to_success}")
 
@@ -969,7 +992,8 @@ class DQNAgent:
         results_file = os.path.join(self.testing_dir, f"test_results_{timestamp}.json")
 
         results = {
-            "average_reward": float(average_reward),
+            "average_original_reward": float(average_reward),
+            "average_shaped_reward": float(average_shaped_reward),
             "success_rate": float(final_success_rate),
             "average_steps_to_success": (
                 float(avg_steps_to_success)
@@ -997,4 +1021,4 @@ class DQNAgent:
 
         print(f"\nTest results saved to: {results_file}")
 
-        return average_reward, final_success_rate
+        return average_reward, average_shaped_reward

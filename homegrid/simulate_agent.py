@@ -68,6 +68,11 @@ class AgentSimulator:
     def load_agent(self, model_path):
         """Load the DQN agent from a checkpoint."""
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # Limit GPU memory usage to approximately 45% of allocation
+        if torch.cuda.is_available():
+            torch.cuda.set_per_process_memory_fraction(0.45)
+
         agent = DQNAgent(env_name=self.env.unwrapped.spec.id)
         agent.env = self.env  # Connect agent to environment
 
