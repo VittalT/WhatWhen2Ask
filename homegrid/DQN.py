@@ -154,8 +154,8 @@ class DQNAgent:
         self.per_epsilon = 0.01
 
         # Reward shaping weight
-        self.distance_weight = 0.01
-        self.additional_weight = 0.2
+        self.distance_weight = 0.05
+        self.additional_weight = 1
 
         # Track previous room for room change bonus
         self.prev_room = None
@@ -740,22 +740,23 @@ class DQNAgent:
                     f"Episode {episode + 1}/{episodes}, "
                     f"Shaped Reward: {total_reward:.4f}, "
                     f"Original Reward: {original_reward_sum:.2f}, "
+                    f"Avg Recent Reward: {avg_recent_reward:.4f}, "
                     f"Success Rate: {success_rate:.1f}%, "
                     f"Avg Loss: {avg_loss:.4f}, "
                     f"Epsilon: {self.epsilon:.3f}"
                 )
 
-                # Early stopping check - use success rate instead of just rewards
-                if success_rate > best_reward:
-                    best_reward = success_rate
+                # Early stopping check - use average reward instead of success rate
+                if avg_recent_reward > best_reward:
+                    best_reward = avg_recent_reward
                     no_improvement_count = 0
 
-                    # Save best model if significantly better, check success rate
+                    # Save best model if significantly better, check average reward
                     if (
-                        len(success_history) >= 100
-                        and success_rate > self.best_avg_reward
+                        len(rewards_history) >= 100
+                        and avg_recent_reward > self.best_avg_reward
                     ):
-                        self.best_avg_reward = success_rate
+                        self.best_avg_reward = avg_recent_reward
                         best_model_path = os.path.join(
                             self.checkpoint_dir, "best_model.pth"
                         )
@@ -766,13 +767,13 @@ class DQNAgent:
                                 "epsilon": self.epsilon,
                                 "episode": episode,
                                 "total_steps": self.total_steps,
-                                "avg_reward": success_rate,
+                                "avg_reward": avg_recent_reward,
                                 "env_info": self.env_info,
                             },
                             best_model_path,
                         )
                         print(
-                            f"New best model saved with success rate: {success_rate:.1f}%"
+                            f"New best model saved with average reward: {avg_recent_reward:.4f}"
                         )
                 else:
                     no_improvement_count += 1
@@ -870,11 +871,8 @@ class DQNAgent:
                 action, cost, state = self.choose_action(state, obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
 
-                # Use original rewards for evaluation, not shaped rewards
-                original_reward = reward
-
                 # Track success without using shaped rewards
-                if original_reward > 0:
+                if reward > 0:
                     self.current_hint = ""
                     episode_success = True
                     steps_to_success.append(step)
@@ -882,7 +880,7 @@ class DQNAgent:
                     task_success_rates[current_task]["successes"] += 1
 
                 # Just subtract the cost from the original reward
-                reward = original_reward - cost
+                reward -= cost
                 total_reward += reward
 
                 # Update previous room for tracking only
