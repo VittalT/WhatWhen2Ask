@@ -508,6 +508,12 @@ def evaluate_checkpoints(
         checkpoint_dir, "latest_evaluation_results.json"
     )
 
+    gpu_info = "None"
+    if torch.cuda.is_available():
+        gpu_info = (
+            f"{torch.cuda.get_device_name(0)} - {torch.cuda.device_count()} device(s)"
+        )
+
     # Add metadata to results
     evaluation_metadata = {
         "timestamp": timestamp,
@@ -516,7 +522,7 @@ def evaluate_checkpoints(
         "checkpoints_tested": checkpoints_tested + 1,  # +1 for baseline
         "total_evaluation_time_seconds": total_eval_time,
         "device": str(device),
-        "gpu_info": gpu_info if torch.cuda.is_available() else "None",
+        "gpu_info": gpu_info,
     }
 
     # Prepare final results with metadata
