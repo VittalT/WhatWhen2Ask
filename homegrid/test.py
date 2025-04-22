@@ -7,6 +7,7 @@ import json
 import time
 import multiprocessing
 from datetime import datetime
+import sys
 
 # Check for GPU availability
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -19,6 +20,30 @@ os.makedirs(checkpoint_dir, exist_ok=True)
 # Create a log directory for tracking metrics
 log_dir = os.path.join(checkpoint_dir, "logs")
 os.makedirs(log_dir, exist_ok=True)
+
+# Set up logging to capture terminal output
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+log_file = os.path.join(log_dir, f"terminal_output_{timestamp}.txt")
+
+
+# Create a function to log output to both console and file
+class Logger:
+    def __init__(self, log_file):
+        self.terminal = sys.stdout
+        self.log = open(log_file, "w")
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+
+# Redirect stdout to our Logger
+sys.stdout = Logger(log_file)
 
 # GPU optimization parameters
 num_workers = min(
@@ -226,6 +251,9 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
         render: Whether to render the environment during testing
         use_gpu: Whether to use GPU acceleration
     """
+    # Use the same timestamp for logging consistency
+    test_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
     # Setup for GPU testing
     if use_gpu and torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -254,9 +282,11 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print(f"Success rate: {success_rate:.1f}%")
     print("=" * 40)
 
-    # Save test results
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    result_path = os.path.join(log_dir, f"test_results_{timestamp}.json")
+    # Save test results with timestamp
+    result_path = os.path.join(log_dir, f"test_results_{test_timestamp}.json")
+
+    # Also save a copy to the main checkpoint directory for easy access
+    summary_result_path = os.path.join(checkpoint_dir, "latest_test_results.json")
 
     results = {
         "checkpoint": str(checkpoint),
@@ -266,13 +296,18 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
         "test_time_seconds": float(test_time),
         "time_per_episode": float(time_per_episode),
         "device": str(agent.device),
-        "timestamp": timestamp,
+        "timestamp": test_timestamp,
     }
 
+    # Save to both locations
     with open(result_path, "w") as f:
         json.dump(results, f, indent=4)
 
+    with open(summary_result_path, "w") as f:
+        json.dump(results, f, indent=4)
+
     print(f"Test results saved to: {result_path}")
+    print(f"Summary results saved to: {summary_result_path}")
 
     return average_reward, success_rate
 
@@ -457,10 +492,21 @@ def evaluate_checkpoints(
     pdf_path = os.path.join(log_dir, f"learning_curve_{timestamp}.pdf")
     plt.savefig(pdf_path, format="pdf", bbox_inches="tight")
 
-    plt.show()
+    # Save figure directly to the checkpoint directory for easier access
+    summary_path = os.path.join(checkpoint_dir, "latest_evaluation.png")
+    plt.savefig(summary_path, dpi=300, bbox_inches="tight")
+
+    # Don't call plt.show() in non-interactive environments
+    if hasattr(sys, "ps1"):  # Check if running in interactive mode
+        plt.show()
+    else:
+        plt.close(fig)  # Close the figure to free memory
 
     # Save detailed results to JSON
     results_path = os.path.join(log_dir, f"checkpoint_evaluation_{timestamp}.json")
+    summary_results_path = os.path.join(
+        checkpoint_dir, "latest_evaluation_results.json"
+    )
 
     # Add metadata to results
     evaluation_metadata = {
@@ -485,7 +531,11 @@ def evaluate_checkpoints(
         },
     }
 
+    # Save to both timestamped and latest locations
     with open(results_path, "w") as f:
+        json.dump(final_results, f, indent=4)
+
+    with open(summary_results_path, "w") as f:
         json.dump(final_results, f, indent=4)
 
     print("\n" + "=" * 50)
@@ -494,7 +544,9 @@ def evaluate_checkpoints(
     print(f"Total checkpoints tested: {checkpoints_tested + 1}")
     print(f"Total evaluation time: {total_eval_time:.1f}s ({total_eval_time/60:.1f}m)")
     print(f"Learning curve saved to: {plt_path}")
+    print(f"Latest evaluation saved to: {summary_path}")
     print(f"Evaluation results saved to: {results_path}")
+    print(f"Summary results saved to: {summary_results_path}")
     print("=" * 50)
 
     return results
@@ -617,33 +669,32 @@ if __name__ == "__main__":
     # Print GPU information if available
     if torch.cuda.is_available():
         print("\nGPU INFORMATION:")
-        print(f"  Device: {torch.cuda.get_device_name(0)}")
-        print(f"  CUDA version: {torch.version.cuda}")
-        print(
-            f"  Total memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB"
-        )
-        print(f"  Number of GPUs: {torch.cuda.device_count()}")
+        gpu_info = {
+            "device": torch.cuda.get_device_name(0),
+            "cuda_version": torch.version.cuda,
+            "memory_gb": f"{torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB",
+            "num_gpus": torch.cuda.device_count(),
+        }
+
+        print(f"  Device: {gpu_info['device']}")
+        print(f"  CUDA version: {gpu_info['cuda_version']}")
+        print(f"  Total memory: {gpu_info['memory_gb']}")
+        print(f"  Number of GPUs: {gpu_info['num_gpus']}")
     else:
+        gpu_info = "None"
         print("\nNo GPU available - will use CPU for training and evaluation")
 
-    """
-    # Run the performance benchmark to estimate training and testing time
-    benchmark_performance(
-        train_episodes=20,  # Quick training benchmark with 20 episodes
-        test_episodes=100,  # Test benchmark with 100 episodes
-        use_gpu=True,  # Use GPU if available
-    )
-    """
+    # Current configuration (uncomment the desired option)
 
+    """
     # OPTION 1: Train a new agent from scratch with GPU acceleration
     # Highly recommended for sparse reward environments
-    """
     train_agent(
         num_episodes=2000,  # 2K episodes to train (more for sparse rewards)
         save_interval=100,  # Save model every 100 episodes
         use_gpu=True,  # Use GPU acceleration if available
     )
-
+    
     test_agent(
         checkpoint="best",  # Test the best model saved during training
         num_episodes=10000,  # 10K test episodes
@@ -671,25 +722,25 @@ if __name__ == "__main__":
     # OPTION 3: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=5000,  # Train on 10K episodes
-        save_interval=500,  # Save checkpoints every 500 episodes
-        use_gpu=True,  # Use GPU acceleration
-    )
+    # train_agent(
+    #     num_episodes=10,  # Train on 10K episodes
+    #     save_interval=5,  # Save checkpoints every 500 episodes
+    #     use_gpu=True,  # Use GPU acceleration
+    # )
 
     test_agent(
         checkpoint="best",  # Test the best model saved during training
-        num_episodes=10000,  # 10K test episodes
+        num_episodes=100,  # 10K test episodes
         use_gpu=True,  # Use GPU for faster testing
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            1000,
-            5000,
-            1000,
+            5,
+            10,
+            5,
         ),  # Test models from episode 1K to 10K, every 1K episodes
-        test_episodes=10000,  # Test each checkpoint on 10K episodes
+        test_episodes=100,  # Test each checkpoint on 10K episodes
         use_gpu=True,  # Use GPU for faster evaluation
     )
 
@@ -703,3 +754,21 @@ if __name__ == "__main__":
         use_gpu=True                # Use GPU acceleration
     )
     """
+
+    # OPTION 5: Run a quick benchmark to estimate runtime for larger training
+    # Uncomment to use:
+    """
+    benchmark_performance(
+        train_episodes=20,          # Quick training benchmark with 20 episodes
+        test_episodes=100,          # Test benchmark with 100 episodes
+        use_gpu=True                # Use GPU if available
+    )
+    """
+
+    # Close the logger at the end of execution
+    if isinstance(sys.stdout, Logger):
+        # Close the log file
+        sys.stdout.log.close()
+        # Restore original stdout
+        sys.stdout = sys.stdout.terminal
+        print(f"Log file saved to: {log_file}")
