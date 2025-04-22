@@ -13,6 +13,7 @@ import os
 import json
 from PIL import Image
 from datetime import datetime
+import time
 
 # Load FastText word embeddings from spaCy (300-dimensional)
 nlp = spacy.load("en_core_web_md")
@@ -185,6 +186,12 @@ class DQNAgent:
         # Directory to save checkpoints
         self.checkpoint_dir = "checkpoints10"
         os.makedirs(self.checkpoint_dir, exist_ok=True)
+
+        # Create separate folders for training and testing outputs
+        self.training_dir = os.path.join(self.checkpoint_dir, "training")
+        self.testing_dir = os.path.join(self.checkpoint_dir, "testing")
+        os.makedirs(self.training_dir, exist_ok=True)
+        os.makedirs(self.testing_dir, exist_ok=True)
 
         # Performance tracking
         self.best_avg_reward = float("-inf")
@@ -643,11 +650,15 @@ class DQNAgent:
         rewards_history = []
         success_history = []
 
+        # For tracking runtime
+        training_start_time = time.time()
+
         # Early stopping variables
         best_reward = float("-inf")
         no_improvement_count = 0
 
         for episode in range(episodes):
+            episode_start_time = time.time()
             obs, info = self.env.reset()
             self.num_llm_calls = 0
             self.current_hint = ""
@@ -729,8 +740,13 @@ class DQNAgent:
             rewards_history.append(total_reward)
             success_history.append(1.0 if episode_success else 0.0)
 
+            # Calculate episode runtime
+            episode_time = time.time() - episode_start_time
+            total_time = time.time() - training_start_time
+            avg_time_per_episode = total_time / (episode + 1)
+
             # Log less frequently to speed up training
-            if (episode + 1) % 100 == 0:
+            if (episode + 1) % 100 == 0 or episode == 0 or episode == episodes - 1:
                 recent_rewards = rewards_history[-min(100, len(rewards_history)) :]
                 recent_success = success_history[-min(100, len(success_history)) :]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
@@ -738,6 +754,7 @@ class DQNAgent:
 
                 print(
                     f"Episode {episode + 1}/{episodes}, "
+                    f"Time: {episode_time:.2f}s (Avg: {avg_time_per_episode:.2f}s), "
                     f"Shaped Reward: {total_reward:.4f}, "
                     f"Original Reward: {original_reward_sum:.2f}, "
                     f"Avg Recent Reward: {avg_recent_reward:.4f}, "
@@ -758,20 +775,18 @@ class DQNAgent:
                     ):
                         self.best_avg_reward = avg_recent_reward
                         best_model_path = os.path.join(
-                            self.checkpoint_dir, "best_model.pth"
+                            self.training_dir, "best_model.pth"
                         )
-                        torch.save(
-                            {
-                                "model_state_dict": self.model.state_dict(),
-                                "optimizer_state_dict": self.optimizer.state_dict(),
-                                "epsilon": self.epsilon,
-                                "episode": episode,
-                                "total_steps": self.total_steps,
-                                "avg_reward": avg_recent_reward,
-                                "env_info": self.env_info,
-                            },
-                            best_model_path,
-                        )
+                        model_data = {
+                            "model_state_dict": self.model.state_dict(),
+                            "optimizer_state_dict": self.optimizer.state_dict(),
+                            "epsilon": self.epsilon,
+                            "episode": episode,
+                            "total_steps": self.total_steps,
+                            "avg_reward": avg_recent_reward,
+                            "env_info": self.env_info,
+                        }
+                        torch.save(model_data, best_model_path)
                         print(
                             f"New best model saved with average reward: {avg_recent_reward:.4f}"
                         )
@@ -790,29 +805,47 @@ class DQNAgent:
             # Save checkpoint less frequently to speed up training
             if (episode + 1) % self.checkpoint_interval == 0:
                 checkpoint_path = os.path.join(
-                    self.checkpoint_dir, f"model_checkpoint_{episode+1}.pth"
+                    self.training_dir, f"model_checkpoint_{episode+1}.pth"
                 )
-                torch.save(
-                    {
-                        "model_state_dict": self.model.state_dict(),
-                        "optimizer_state_dict": self.optimizer.state_dict(),
-                        "epsilon": self.epsilon,
-                        "episode": episode,
-                        "total_steps": self.total_steps,
-                    },
-                    checkpoint_path,
-                )
+                checkpoint_data = {
+                    "model_state_dict": self.model.state_dict(),
+                    "optimizer_state_dict": self.optimizer.state_dict(),
+                    "epsilon": self.epsilon,
+                    "episode": episode,
+                    "total_steps": self.total_steps,
+                }
+                torch.save(checkpoint_data, checkpoint_path)
                 print(f"Saved checkpoint: {checkpoint_path}")
 
                 # Plot learning curve at checkpoints
                 if len(rewards_history) > 0:
                     plt.figure(figsize=(12, 8))
 
-                    # Plot both reward and success rate
+                    # Plot both reward and success rate as moving averages
                     plt.subplot(2, 1, 1)
-                    plt.plot(rewards_history)
+
+                    # Plot raw rewards in light color
+                    plt.plot(rewards_history, "b-", alpha=0.3, label="Raw Rewards")
+
+                    # Calculate moving average of rewards
+                    if len(rewards_history) > 100:
+                        window_size = 100
+                        reward_moving_avg = [
+                            sum(rewards_history[i : i + window_size]) / window_size
+                            for i in range(len(rewards_history) - window_size + 1)
+                        ]
+
+                        plt.plot(
+                            range(window_size - 1, episode + 1),
+                            reward_moving_avg,
+                            "b-",
+                            linewidth=2,
+                            label=f"Moving Avg (Window={window_size})",
+                        )
+
                     plt.title(f"Learning Curve - Rewards (Episode {episode+1})")
                     plt.ylabel("Shaped Reward")
+                    plt.legend()
 
                     # Calculate moving average of success rate
                     if len(success_history) > 100:
@@ -833,11 +866,10 @@ class DQNAgent:
                         plt.ylabel("Success Rate")
 
                     plt.tight_layout()
-                    plt.savefig(
-                        os.path.join(
-                            self.checkpoint_dir, f"learning_curve_{episode+1}.png"
-                        )
+                    plot_path = os.path.join(
+                        self.training_dir, f"learning_curve_{episode+1}.png"
                     )
+                    plt.savefig(plot_path)
                     plt.close()
 
     def test(self, episodes=None, render=False):
@@ -934,9 +966,7 @@ class DQNAgent:
 
         # Save test results to a file
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = os.path.join(
-            self.checkpoint_dir, f"test_results_{timestamp}.json"
-        )
+        results_file = os.path.join(self.testing_dir, f"test_results_{timestamp}.json")
 
         results = {
             "average_reward": float(average_reward),

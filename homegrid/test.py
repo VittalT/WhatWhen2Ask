@@ -17,13 +17,15 @@ print(f"Using device: {device}")
 checkpoint_dir = "checkpoints10"
 os.makedirs(checkpoint_dir, exist_ok=True)
 
-# Create a log directory for tracking metrics
-log_dir = os.path.join(checkpoint_dir, "logs")
-os.makedirs(log_dir, exist_ok=True)
+# Create separate folders for training and testing outputs
+training_dir = os.path.join(checkpoint_dir, "training")
+testing_dir = os.path.join(checkpoint_dir, "testing")
+os.makedirs(training_dir, exist_ok=True)
+os.makedirs(testing_dir, exist_ok=True)
 
 # Set up logging to capture terminal output
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-log_file = os.path.join(log_dir, f"terminal_output_{timestamp}.txt")
+log_file = os.path.join(testing_dir, f"terminal_output_{timestamp}.txt")
 
 
 # Create a function to log output to both console and file
@@ -86,24 +88,43 @@ def load_agent(
         # Handle both direct paths and episode numbers
         if isinstance(checkpoint_path, int):
             checkpoint_path = os.path.join(
-                checkpoint_dir, f"model_checkpoint_{checkpoint_path}.pth"
+                training_dir, f"model_checkpoint_{checkpoint_path}.pth"
             )
-        elif (
-            not os.path.exists(checkpoint_path)
-            and str(checkpoint_path).lower() == "best"
-        ):
-            checkpoint_path = os.path.join(checkpoint_dir, "best_model.pth")
-        elif (
-            not os.path.exists(checkpoint_path)
-            and str(checkpoint_path).lower() == "final"
-        ):
-            checkpoint_path = os.path.join(checkpoint_dir, "final_model.pth")
+            if not os.path.exists(checkpoint_path):
+                print(f"Checkpoint for episode {checkpoint_path} not found, skipping")
+                return agent
+
+        elif str(checkpoint_path).lower() == "best":
+            checkpoint_path = os.path.join(training_dir, "best_model.pth")
+            if not os.path.exists(checkpoint_path):
+                print("Best model not found, using random initialization")
+                return agent
+
+        elif str(checkpoint_path).lower() == "final":
+            # Look for the most recent final model
+            final_models = []
+            final_models.extend(
+                [
+                    os.path.join(training_dir, f)
+                    for f in os.listdir(training_dir)
+                    if f.startswith("final_model_") and f.endswith(".pth")
+                ]
+            )
+
+            if final_models:
+                # Sort by modification time, newest first
+                checkpoint_path = sorted(
+                    final_models, key=os.path.getmtime, reverse=True
+                )[0]
+            else:
+                print("Final model not found, using random initialization")
+                return agent
 
         if os.path.exists(checkpoint_path):
             print(f"Loading checkpoint: {checkpoint_path}")
-            # Handle different checkpoint formats - load to correct device
-            checkpoint = torch.load(checkpoint_path, map_location=device)
-            if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            try:
+                # Load checkpoint with proper format
+                checkpoint = torch.load(checkpoint_path, map_location=device)
                 agent.model.load_state_dict(checkpoint["model_state_dict"])
                 if "optimizer_state_dict" in checkpoint:
                     agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -114,17 +135,13 @@ def load_agent(
                 print(
                     f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
                 )
-            else:
-                # Legacy format (just model state dict)
-                agent.model.load_state_dict(checkpoint)
-                print(f"Loaded legacy checkpoint format (only model weights)")
 
-            # Make sure the target network is synced
-            agent.update_target_network()
-            return agent
-        else:
-            print(f"Checkpoint file not found: {checkpoint_path}")
-            print("Creating new agent with random initialization")
+                # Make sure the target network is synced
+                agent.update_target_network()
+                return agent
+            except Exception as e:
+                print(f"Error loading checkpoint: {e}")
+                print("Creating new agent with random initialization")
 
     return agent
 
@@ -186,8 +203,19 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
         "worker_threads": num_workers,
     }
 
+    # Create training log file
+    training_log_path = os.path.join(training_dir, f"training_log_{timestamp}.txt")
+    training_log = open(training_log_path, "w")
+    training_log.write("=== TRAINING LOG ===\n\n")
+
+    # Log metadata
+    training_log.write("TRAINING PARAMETERS:\n")
+    for key, value in metadata.items():
+        training_log.write(f"  {key}: {value}\n")
+    training_log.write("\n")
+
     # Save metadata
-    metadata_path = os.path.join(log_dir, f"training_metadata_{timestamp}.json")
+    metadata_path = os.path.join(training_dir, f"training_metadata_{timestamp}.json")
     with open(metadata_path, "w") as f:
         json.dump(metadata, f, indent=4)
 
@@ -201,12 +229,19 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
 
     # Start training with performance monitoring
     print(f"Training agent for {num_episodes} episodes...")
+    training_log.write(f"Starting training for {num_episodes} episodes...\n\n")
 
     # Run training
     agent.train(episodes=num_episodes)
 
+    # Calculate and log total training time
+    training_time = time.time() - start_time
+    minutes = training_time / 60
+    hours = minutes / 60
+    time_per_episode = training_time / num_episodes
+
     # Save final model
-    final_path = os.path.join(checkpoint_dir, f"final_model_{timestamp}.pth")
+    final_path = os.path.join(training_dir, f"final_model_{timestamp}.pth")
     torch.save(
         {
             "model_state_dict": agent.model.state_dict(),
@@ -214,15 +249,21 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
             "epsilon": agent.epsilon,
             "total_steps": agent.total_steps,
             "metadata": metadata,
+            "training_time_seconds": training_time,
         },
         final_path,
     )
 
-    # Calculate and display training statistics
-    training_time = time.time() - start_time
-    minutes = training_time / 60
-    hours = minutes / 60
-    time_per_episode = training_time / num_episodes
+    # Log training statistics
+    training_log.write("\n=== TRAINING COMPLETED ===\n")
+    training_log.write(
+        f"Total training time: {training_time:.1f} seconds ({minutes:.1f} minutes, {hours:.2f} hours)\n"
+    )
+    training_log.write(f"Average time per episode: {time_per_episode:.2f} seconds\n")
+    training_log.write(f"Final epsilon: {agent.epsilon:.4f}\n")
+    training_log.write(f"Total steps: {agent.total_steps}\n")
+    training_log.write(f"Final model saved to: {final_path}\n")
+    training_log.close()
 
     print("\n" + "=" * 50)
     print("TRAINING COMPLETED")
@@ -230,6 +271,7 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
     print(f"Total time: {training_time:.1f} sec ({minutes:.1f} min, {hours:.2f} hr)")
     print(f"Time per episode: {time_per_episode:.2f} sec")
     print(f"Final model saved to: {final_path}")
+    print(f"Training log saved to: {training_log_path}")
     print("=" * 50)
 
     return agent
@@ -277,10 +319,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print("=" * 40)
 
     # Save test results with timestamp
-    result_path = os.path.join(log_dir, f"test_results_{test_timestamp}.json")
-
-    # Also save a copy to the main checkpoint directory for easy access
-    summary_result_path = os.path.join(checkpoint_dir, "latest_test_results.json")
+    result_path = os.path.join(testing_dir, f"test_results_{test_timestamp}.json")
 
     results = {
         "checkpoint": str(checkpoint),
@@ -293,15 +332,10 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
         "timestamp": test_timestamp,
     }
 
-    # Save to both locations
     with open(result_path, "w") as f:
         json.dump(results, f, indent=4)
 
-    with open(summary_result_path, "w") as f:
-        json.dump(results, f, indent=4)
-
     print(f"Test results saved to: {result_path}")
-    print(f"Summary results saved to: {summary_result_path}")
 
     return average_reward, success_rate
 
@@ -343,9 +377,7 @@ def evaluate_checkpoints(
     total_eval_time = baseline_time
 
     for episode in range(start, end + 1, step):
-        checkpoint_path = os.path.join(
-            checkpoint_dir, f"model_checkpoint_{episode}.pth"
-        )
+        checkpoint_path = os.path.join(training_dir, f"model_checkpoint_{episode}.pth")
         if os.path.exists(checkpoint_path):
             print(f"\nEvaluating checkpoint at episode {episode}...")
 
@@ -371,7 +403,7 @@ def evaluate_checkpoints(
             print(f"Checkpoint for episode {episode} not found, skipping")
 
     # Also test best model if it exists
-    best_path = os.path.join(checkpoint_dir, "best_model.pth")
+    best_path = os.path.join(training_dir, "best_model.pth")
     if os.path.exists(best_path):
         print("\nEvaluating best model...")
         if use_gpu and torch.cuda.is_available():
@@ -479,16 +511,12 @@ def evaluate_checkpoints(
             )
 
     # Save plot with timestamp
-    plt_path = os.path.join(log_dir, f"learning_curve_{timestamp}.png")
+    plt_path = os.path.join(testing_dir, f"learning_curve_{timestamp}.png")
     plt.savefig(plt_path, dpi=300, bbox_inches="tight")
 
     # Also save as PDF for publication quality
-    pdf_path = os.path.join(log_dir, f"learning_curve_{timestamp}.pdf")
+    pdf_path = os.path.join(testing_dir, f"learning_curve_{timestamp}.pdf")
     plt.savefig(pdf_path, format="pdf", bbox_inches="tight")
-
-    # Save figure directly to the checkpoint directory for easier access
-    summary_path = os.path.join(checkpoint_dir, "latest_evaluation.png")
-    plt.savefig(summary_path, dpi=300, bbox_inches="tight")
 
     # Don't call plt.show() in non-interactive environments
     if hasattr(sys, "ps1"):  # Check if running in interactive mode
@@ -497,10 +525,7 @@ def evaluate_checkpoints(
         plt.close(fig)  # Close the figure to free memory
 
     # Save detailed results to JSON
-    results_path = os.path.join(log_dir, f"checkpoint_evaluation_{timestamp}.json")
-    summary_results_path = os.path.join(
-        checkpoint_dir, "latest_evaluation_results.json"
-    )
+    results_path = os.path.join(testing_dir, f"checkpoint_evaluation_{timestamp}.json")
 
     gpu_info = "None"
     if torch.cuda.is_available():
@@ -531,11 +556,8 @@ def evaluate_checkpoints(
         },
     }
 
-    # Save to both timestamped and latest locations
+    # Save results
     with open(results_path, "w") as f:
-        json.dump(final_results, f, indent=4)
-
-    with open(summary_results_path, "w") as f:
         json.dump(final_results, f, indent=4)
 
     print("\n" + "=" * 50)
@@ -543,10 +565,8 @@ def evaluate_checkpoints(
     print("=" * 50)
     print(f"Total checkpoints tested: {checkpoints_tested + 1}")
     print(f"Total evaluation time: {total_eval_time:.1f}s ({total_eval_time/60:.1f}m)")
-    print(f"Learning curve saved to: {plt_path}")
-    print(f"Latest evaluation saved to: {summary_path}")
+    print(f"Learning curves saved to: {plt_path}")
     print(f"Evaluation results saved to: {results_path}")
-    print(f"Summary results saved to: {summary_results_path}")
     print("=" * 50)
 
     return results
@@ -638,7 +658,7 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    benchmark_file = os.path.join(log_dir, f"benchmark_results_{timestamp}.json")
+    benchmark_file = os.path.join(testing_dir, f"benchmark_results_{timestamp}.json")
 
     # Include hardware info
     hw_info = {
@@ -723,26 +743,26 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     train_agent(
-        num_episodes=10,  # Train on 5K episodes
-        save_interval=5,  # Save checkpoints every 500 episodes
-        use_gpu=True,  # Use GPU acceleration
+        num_episodes=6000,
+        save_interval=500,
+        use_gpu=True,
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            5,
-            10,
-            5,
-        ),  # Test models from episode 500 to 5K, every 500 episodes
-        test_episodes=100,  # Test each checkpoint on 30K episodes
-        use_gpu=True,  # Use GPU for faster evaluation
+            2000,
+            6000,
+            2000,
+        ),
+        test_episodes=10000,
+        use_gpu=True,
     )
 
-    test_agent(
-        checkpoint="best",  # Test the final model after continued training
-        num_episodes=100,  # Test on 1000 episodes
-        use_gpu=True,  # Use GPU for faster testing
-    )
+    # test_agent(
+    #     checkpoint="best",
+    #     num_episodes=100,
+    #     use_gpu=True
+    # )
 
     # OPTION 4: Quick test of a specific checkpoint
     # Uncomment to use:
