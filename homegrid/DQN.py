@@ -437,11 +437,17 @@ class DQNAgent:
         # Return both the shaped reward (for learning) and the original reward (for logging)
         return shaped_reward, current_distance, base_reward
 
-    def choose_action(self, state, obs, info):
+    def choose_action(self, state, obs, info, testing=False):
         """
         Choose an action using an epsilon-greedy strategy.
         If uncertainty is high and LLM calls are allowed, query the LLM.
         Uses GPU for tensor operations.
+
+        Args:
+            state: Preprocessed state tuple (observation, context)
+            obs: Raw observation from environment
+            info: Info dict from environment
+            testing: If True, disable exploration and always choose greedy action
         """
         uncertainty = self.uncertainty_score(state)
         cost = 0
@@ -463,8 +469,8 @@ class DQNAgent:
             self.current_hint = hint
             state = self.preprocess_state(obs, info)
 
-        # Epsilon-greedy action selection
-        if random.random() < self.epsilon:
+        # Epsilon-greedy action selection (skip if testing)
+        if not testing and random.random() < self.epsilon:
             return self.env.action_space.sample(), cost, state
 
         # Greedy action selection using GPU
@@ -861,7 +867,7 @@ class DQNAgent:
             state = self.preprocess_state(obs, info)
 
             for step in range(self.env.max_steps):
-                action, cost, state = self.choose_action(state, obs, info)
+                action, cost, state = self.choose_action(state, obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
 
                 # Use original rewards for evaluation, not shaped rewards

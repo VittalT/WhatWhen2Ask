@@ -95,8 +95,7 @@ class AgentSimulator:
 
         # Set to evaluation mode
         agent.model.eval()
-        # Disable exploration for demonstration
-        agent.epsilon = 0.0
+        # Always disable exploration for visualization
         return agent
 
     def setup_visualization(self):
@@ -317,7 +316,9 @@ class AgentSimulator:
         while self.running:
             # Get action from agent
             with torch.no_grad():
-                action, cost, state = self.agent.choose_action(state, obs, info)
+                action, cost, state = self.agent.choose_action(
+                    state, obs, info, testing=True
+                )
 
             # Take step in environment
             obs, shaped_reward, actual_reward, terminated, truncated, info = self.step(
