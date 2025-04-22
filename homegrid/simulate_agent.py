@@ -98,14 +98,13 @@ class AgentSimulator:
                 checkpoint_path = sorted(
                     final_models, key=os.path.getmtime, reverse=True
                 )[0]
-            else:
-                print(f"No final model found in {training_dir}")
-                return agent
         else:
             checkpoint_path = model_path
 
         print(f"Loading model from: {checkpoint_path}")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
         agent.model.load_state_dict(checkpoint["model_state_dict"])
         if "epsilon" in checkpoint:
             agent.epsilon = checkpoint["epsilon"]

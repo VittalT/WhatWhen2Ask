@@ -90,15 +90,9 @@ def load_agent(
             checkpoint_path = os.path.join(
                 training_dir, f"model_checkpoint_{checkpoint_path}.pth"
             )
-            if not os.path.exists(checkpoint_path):
-                print(f"Checkpoint for episode {checkpoint_path} not found, skipping")
-                return agent
 
         elif str(checkpoint_path).lower() == "best":
             checkpoint_path = os.path.join(training_dir, "best_model.pth")
-            if not os.path.exists(checkpoint_path):
-                print("Best model not found, using random initialization")
-                return agent
 
         elif str(checkpoint_path).lower() == "final":
             # Look for the most recent final model
@@ -116,32 +110,27 @@ def load_agent(
                 checkpoint_path = sorted(
                     final_models, key=os.path.getmtime, reverse=True
                 )[0]
-            else:
-                print("Final model not found, using random initialization")
-                return agent
 
-        if os.path.exists(checkpoint_path):
-            print(f"Loading checkpoint: {checkpoint_path}")
-            try:
-                # Load checkpoint with proper format
-                checkpoint = torch.load(checkpoint_path, map_location=device)
-                agent.model.load_state_dict(checkpoint["model_state_dict"])
-                if "optimizer_state_dict" in checkpoint:
-                    agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-                if "epsilon" in checkpoint:
-                    agent.epsilon = checkpoint["epsilon"]
-                if "total_steps" in checkpoint:
-                    agent.total_steps = checkpoint["total_steps"]
-                print(
-                    f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
-                )
+        # Load the model
+        print(f"Loading checkpoint: {checkpoint_path}")
+        # Load checkpoint with proper format
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
+        agent.model.load_state_dict(checkpoint["model_state_dict"])
+        if "optimizer_state_dict" in checkpoint:
+            agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "epsilon" in checkpoint:
+            agent.epsilon = checkpoint["epsilon"]
+        if "total_steps" in checkpoint:
+            agent.total_steps = checkpoint["total_steps"]
+        print(
+            f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
+        )
 
-                # Make sure the target network is synced
-                agent.update_target_network()
-                return agent
-            except Exception as e:
-                print(f"Error loading checkpoint: {e}")
-                print("Creating new agent with random initialization")
+        # Make sure the target network is synced
+        agent.update_target_network()
+        return agent
 
     return agent
 
@@ -385,8 +374,21 @@ def evaluate_checkpoints(
             if use_gpu and torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            # Load and test agent
-            agent = load_agent(checkpoint_path, use_gpu=use_gpu)
+            # Explicitly load checkpoint with weights_only=False
+            agent = DQNAgent(env_name="homegrid-task")
+            checkpoint = torch.load(
+                checkpoint_path, map_location=device, weights_only=False
+            )
+            agent.model.load_state_dict(checkpoint["model_state_dict"])
+            if "optimizer_state_dict" in checkpoint:
+                agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if "epsilon" in checkpoint:
+                agent.epsilon = checkpoint["epsilon"]
+            if "total_steps" in checkpoint:
+                agent.total_steps = checkpoint["total_steps"]
+            agent.update_target_network()
+
+            # Run test
             checkpoint_start = time.time()
             reward, success_rate = agent.test(episodes=test_episodes)
             checkpoint_time = time.time() - checkpoint_start
@@ -409,7 +411,19 @@ def evaluate_checkpoints(
         if use_gpu and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        best_agent = load_agent(best_path, use_gpu=use_gpu)
+        # Explicitly load best model with weights_only=False
+        best_agent = DQNAgent(env_name="homegrid-task")
+        checkpoint = torch.load(best_path, map_location=device, weights_only=False)
+        best_agent.model.load_state_dict(checkpoint["model_state_dict"])
+        if "optimizer_state_dict" in checkpoint:
+            best_agent.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        if "epsilon" in checkpoint:
+            best_agent.epsilon = checkpoint["epsilon"]
+        if "total_steps" in checkpoint:
+            best_agent.total_steps = checkpoint["total_steps"]
+        best_agent.update_target_network()
+
+        # Run test
         best_start = time.time()
         best_reward, best_success_rate = best_agent.test(episodes=test_episodes)
         best_time = time.time() - best_start
