@@ -635,6 +635,7 @@ if __name__ == "__main__":
 
     # OPTION 1: Train a new agent from scratch with GPU acceleration
     # Highly recommended for sparse reward environments
+    """
     train_agent(
         num_episodes=2000,  # 2K episodes to train (more for sparse rewards)
         save_interval=100,  # Save model every 100 episodes
@@ -646,6 +647,7 @@ if __name__ == "__main__":
         num_episodes=10000,  # 10K test episodes
         use_gpu=True,  # Use GPU for faster testing
     )
+    """
 
     # OPTION 2: Continue training from a previous checkpoint
     # Uncomment to use:
@@ -666,24 +668,28 @@ if __name__ == "__main__":
 
     # OPTION 3: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
-    """
+
     train_agent(
-        num_episodes=10000,  # Train on 10K episodes
+        num_episodes=5000,  # Train on 10K episodes
         save_interval=500,  # Save checkpoints every 500 episodes
         use_gpu=True,  # Use GPU acceleration
     )
 
-    
+    test_agent(
+        checkpoint="best",  # Test the best model saved during training
+        num_episodes=10000,  # 10K test episodes
+        use_gpu=True,  # Use GPU for faster testing
+    )
+
     evaluate_checkpoints(
         checkpoint_range=(
-            500,
-            8500,
+            1000,
+            5000,
             1000,
         ),  # Test models from episode 1K to 10K, every 1K episodes
-        test_episodes=1000,  # Test each checkpoint on 10K episodes
+        test_episodes=10000,  # Test each checkpoint on 10K episodes
         use_gpu=True,  # Use GPU for faster evaluation
     )
-    """
 
     # OPTION 4: Quick test of a specific checkpoint
     # Uncomment to use:

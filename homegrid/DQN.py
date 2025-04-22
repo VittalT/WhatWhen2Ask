@@ -144,7 +144,7 @@ class DQNAgent:
 
         # Memory parameters
         self.replay_buffer = {}
-        self.max_replay_buffer_size = 10000  # Reduced for computational efficiency
+        self.max_replay_buffer_size = 2000  # Reduced for computational efficiency
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -670,8 +670,8 @@ class DQNAgent:
                     "priorities": deque(maxlen=self.max_replay_buffer_size),
                 }
 
-            # Verbose logging every 50 episodes or as needed
-            verbose = episode % 50 == 0
+            # Verbose logging every 500 episodes or as needed
+            verbose = episode % 500 == 0
             if verbose:
                 print(f"\nEpisode {episode + 1}/{episodes}, Task: {task_id}")
                 print(f"Current epsilon: {self.epsilon:.3f}")
@@ -734,9 +734,9 @@ class DQNAgent:
             success_history.append(1.0 if episode_success else 0.0)
 
             # Log less frequently to speed up training
-            if (episode + 1) % 10 == 0:
-                recent_rewards = rewards_history[-min(10, len(rewards_history)) :]
-                recent_success = success_history[-min(10, len(success_history)) :]
+            if (episode + 1) % 100 == 0:
+                recent_rewards = rewards_history[-min(100, len(rewards_history)) :]
+                recent_success = success_history[-min(100, len(success_history)) :]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
                 success_rate = sum(recent_success) / len(recent_success) * 100
 
@@ -756,7 +756,7 @@ class DQNAgent:
 
                     # Save best model if significantly better, check success rate
                     if (
-                        len(success_history) >= 10
+                        len(success_history) >= 100
                         and success_rate > self.best_avg_reward
                     ):
                         self.best_avg_reward = success_rate
@@ -904,7 +904,7 @@ class DQNAgent:
                 success_count += 1
 
             # Log progress periodically
-            if episode % 100 == 0 or episode == episodes - 1:
+            if episode % 1000 == 0 or episode == episodes - 1:
                 success_rate = success_count / (episode + 1) * 100
                 avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
                 print(
