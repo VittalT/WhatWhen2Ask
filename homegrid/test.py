@@ -238,7 +238,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print(f"Using device: {agent.device}")
 
     start_time = time.time()
-    average_reward = agent.test(episodes=num_episodes, render=render)
+    average_reward, success_rate = agent.test(episodes=num_episodes, render=render)
     test_time = time.time() - start_time
 
     # Calculate statistics
@@ -251,6 +251,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print(f"Testing time: {test_time:.1f} seconds ({test_time/60:.1f} minutes)")
     print(f"Time per episode: {time_per_episode:.3f} seconds")
     print(f"Average reward: {average_reward:.4f}")
+    print(f"Success rate: {success_rate:.1f}%")
     print("=" * 40)
 
     # Save test results
@@ -261,6 +262,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
         "checkpoint": str(checkpoint),
         "num_episodes": num_episodes,
         "average_reward": float(average_reward),
+        "success_rate": float(success_rate),
         "test_time_seconds": float(test_time),
         "time_per_episode": float(time_per_episode),
         "device": str(agent.device),
@@ -272,7 +274,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
 
     print(f"Test results saved to: {result_path}")
 
-    return average_reward
+    return average_reward, success_rate
 
 
 def evaluate_checkpoints(
