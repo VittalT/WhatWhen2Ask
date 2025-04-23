@@ -159,9 +159,6 @@ class DQNAgent:
         self.distance_weight = 0.05
         self.additional_weight = 1
 
-        # Track previous room for room change bonus
-        self.prev_room = None
-
         # Get observation shape from the environment (e.g. (96, 96, 3))
         self.obs_shape = self.env.observation_space["image"].shape
         # Number of actions from environment.
@@ -206,6 +203,22 @@ class DQNAgent:
             "device": str(self.device),
         }
 
+        # Store potential components for visualization
+        self.potential_components = {
+            "pot_dist": 0,
+            "pot_orientation": 0,
+            "pot_carrying": 0,
+            "pot_expl": 0,
+            "pot_time": 0,
+            "weighted_dist": 0,
+            "weighted_orientation": 0,
+            "weighted_carrying": 0,
+            "weighted_expl": 0,
+            "weighted_time": 0,
+            "current_objective_idx": 0,
+            "objectives": [],
+        }
+
     def encode_str(self, text, encode_context=True):
         """
         Convert a string to a 300-dimensional FastText embedding and move to device.
@@ -220,7 +233,7 @@ class DQNAgent:
         """
         Preprocess the state by concatenating the observation with context features.
         The context is arranged as:
-          [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
+        [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
         """
         if not hint:
             hint = self.current_hint
@@ -296,200 +309,158 @@ class DQNAgent:
 
         return entropy / max_entropy
 
-    def compute_task_components(self, info):
+    def reset_episode(self, info):
+        """Reset episode-specific variables and parse task objectives"""
+        # Reset variables
+        self.visited_rooms = {info["symbolic_state"]["agent"]["room"].lower()}
+        self.visited_cells = {tuple(info["symbolic_state"]["agent"]["pos"])}
+        self.current_step = 0
+        self.previous_potential = None
+
+    def _find_matching_objects(self, info):
         """
-        Identify task-relevant components and the agent's current relation to them.
-        Returns structured data about source, destination, carrying status, and next objective.
+        Find all objects in the environment mentioned in the text description
+        and sort them by their position in the text
         """
+        matches = []
+        text = self.env.task.lower()
+
+        # Check all objects and rooms
+        for obj in info["symbolic_state"]["objects"] + self.env.rooms:
+            obj_name = obj["name"].lower()
+            if obj_name in text:
+                # Find position in the text
+                idx = text.find(obj_name)
+                matches.append((idx, obj))
+
+        # Sort by position in text (earlier mentions first)
+        matches.sort(key=lambda x: x[0])
+
+        # Return just the objects in order
+        return [obj for _, obj in matches]
+
+    def compute_potential(self, info):
+        """Compute a potential function for reward shaping based on objectives"""
+        # Get agent's current state
         agent_pos = info["symbolic_state"]["agent"]["pos"]
         agent_room = info["symbolic_state"]["agent"]["room"].lower()
         agent_dir = info["symbolic_state"]["agent"]["dir"]
-        carried_obj = info["symbolic_state"]["agent"]["carrying"]
-        carried_name = carried_obj.lower() if carried_obj is not None else None
-        task_text = self.env.task.lower()
+        carrying = info["symbolic_state"]["agent"]["carrying"]
+        self.objectives = self._find_matching_objects(info)
 
-        # Parse task to identify source and destination objects
-        has_destination = " to " in task_text
-        if has_destination:
-            parts = task_text.split(" to ")
-            source_part = parts[0].strip()
-            dest_part = parts[1].strip()
-        else:
-            # Handle tasks without a destination (e.g., "get the apple")
-            source_part = task_text
-            dest_part = ""
-
-        # Find relevant objects with positions
-        relevant_objects = {}
-        for obj in info["symbolic_state"]["objects"] + self.env.rooms:
-            obj_name = obj["name"].lower()
-
-            # Check relevance to task
-            is_source = obj_name in source_part
-            is_dest = obj_name in dest_part
-
-            if is_source or is_dest:
-                relevant_objects[obj_name] = {
-                    "pos": obj["pos"],
-                    "room": (
-                        obj["room"].lower()
-                        if "room" in obj and obj["room"] is not None
-                        else ""
-                    ),
-                    "is_source": is_source,
-                    "is_dest": is_dest,
-                    "priority": (
-                        source_part.find(obj_name)
-                        if is_source
-                        else dest_part.find(obj_name)
-                    ),
-                }
-
-        # Determine next objective
-        carrying_source = carried_name is not None and carried_name in source_part
-
-        # If carrying source and there's a destination, next objective is the destination
-        if carrying_source and has_destination:
-            next_objective = "destination"
-        # Otherwise, next objective is the source
-        else:
-            next_objective = "source"
-
-        # Find closest object for each category (source/destination)
-        closest = {"source": None, "destination": None}
-        for obj_name, obj_data in relevant_objects.items():
-            category = "source" if obj_data["is_source"] else "destination"
-
-            # Skip if this is the carried object (we already have it)
-            if carried_name == obj_name:
-                continue
-
-            # Calculate distance
-            euclidean_dist = np.linalg.norm(
-                np.array(agent_pos, dtype=float)
-                - np.array(obj_data["pos"], dtype=float)
-            )
-
-            # Add room penalty if in different room
-            room_penalty = (
-                5 if obj_data["room"] and obj_data["room"] != agent_room else 0
-            )
-            total_dist = euclidean_dist + room_penalty
-
-            # Calculate orientation factor (how directly agent is facing the object)
-            dx = obj_data["pos"][0] - agent_pos[0]
-            dy = obj_data["pos"][1] - agent_pos[1]
-
-            # Convert agent direction to angle (0=right, 1=down, 2=left, 3=up)
-            agent_angles = [0, 90, 180, 270]  # in degrees
-            agent_angle = agent_angles[agent_dir]
-
-            # Calculate angle to object (in degrees)
-            obj_angle = np.degrees(np.arctan2(dy, dx)) % 360
-
-            # Calculate how well agent is oriented toward object (1 = perfect, 0 = opposite)
-            angle_diff = min(
-                abs(agent_angle - obj_angle), 360 - abs(agent_angle - obj_angle)
-            )
-            orientation_factor = max(0, 1 - angle_diff / 180)
-
-            obj_data.update({"distance": total_dist, "orientation": orientation_factor})
-
-            # Update closest object if this is closer or first one found
-            if closest[category] is None or total_dist < closest[category]["distance"]:
-                closest[category] = obj_data
-
-        return {
-            "carrying_source": carrying_source,
-            "has_destination": has_destination,
-            "next_objective": next_objective,
-            "closest_source": closest["source"],
-            "closest_dest": closest["destination"],
-            "agent_pos": agent_pos,
-            "agent_room": agent_room,
-            "current_step": self.env.step_cnt,
-            "visited_rooms": getattr(self, "visited_rooms", set()),
-        }
-
-    def compute_potential(self, info):
-        """
-        Compute a potential function for reward shaping.
-        Higher potential = closer to goal completion.
-        """
-        # Initialize or update visited rooms set
-        if not hasattr(self, "visited_rooms"):
-            self.visited_rooms = set()
-        self.visited_rooms.add(info["symbolic_state"]["agent"]["room"])
-
-        # Get task components
-        task_data = self.compute_task_components(info)
+        # Update visited rooms
+        self.visited_rooms.add(agent_room)
+        self.visited_cells.add(tuple(agent_pos))
 
         # Start with base potential
         potential = 0
 
-        # Component 1: Distance to objective (negative because closer is better)
-        distance_potential = 0
-        if task_data["next_objective"] == "source" and task_data["closest_source"]:
-            distance_potential -= task_data["closest_source"]["distance"]
-        elif task_data["next_objective"] == "destination" and task_data["closest_dest"]:
-            distance_potential -= task_data["closest_dest"]["distance"]
+        # Determine the current objective index
+        current_objective_idx = 0
 
-        # Component 2: Step discount (encourage faster completion)
-        step_factor = max(0, 1 - task_data["current_step"] / self.env.max_steps)
-        step_potential = 5 * step_factor  # Scale appropriately
-
-        # Component 3: Orientation toward objective
-        orientation_potential = 0
-        if task_data["next_objective"] == "source" and task_data["closest_source"]:
-            orientation_potential = 2 * task_data["closest_source"]["orientation"]
-        elif task_data["next_objective"] == "destination" and task_data["closest_dest"]:
-            orientation_potential = 2 * task_data["closest_dest"]["orientation"]
-
-        # Component 5: Exploration (encourage visiting all rooms)
-        total_rooms = len(self.env.rooms)
-        exploration_potential = 2 * (
-            len(task_data["visited_rooms"]) / max(1, total_rooms)
+        # Check if carrying first objective (in a multi-objective task)
+        carrying_first_obj = (
+            carrying is not None
+            and carrying.lower() == self.objectives[0]["name"].lower()
+            and len(self.objectives) > 1
         )
 
-        # Sum all components with weights
+        # If carrying the first object and there's more objectives, focus on the next one
+        if carrying_first_obj:
+            current_objective_idx = 1
+
+        pot_dist, pot_orientation, pot_carrying = 0, 0, 0
+
+        # If we have a valid objective at the current index
+        if current_objective_idx < len(self.objectives):
+            # Room penalty if in different room
+            obj = self.objectives[current_objective_idx]
+            obj_pos = obj["pos"]
+
+            remaining_objs = self.objectives[current_objective_idx:]
+            positions = [agent_pos] + [obj["pos"] for obj in remaining_objs]
+            pot_dist = sum(
+                np.linalg.norm(
+                    np.array(positions[i], float) - np.array(positions[i + 1], float)
+                )
+                for i in range(len(positions) - 1)
+            )
+
+            # Orientation component
+            dx = obj_pos[0] - agent_pos[0]
+            dy = obj_pos[1] - agent_pos[1]
+            agent_angles = [0, 90, 180, 270]  # 0=right, 1=down, 2=left, 3=up
+            agent_angle = agent_angles[agent_dir]
+            obj_angle = np.degrees(np.arctan2(dy, dx)) % 360
+            signed_diff = abs(agent_angle - obj_angle)
+            angle_diff = min(signed_diff, 360 - signed_diff)
+            pot_orientation = max(0, 1 - angle_diff / 180)
+
+            if carrying_first_obj:
+                pot_carrying = 1
+
+        # pot_rooms = len(self.visited_rooms)
+        pot_expl = len(self.visited_cells)
+        pot_time = self.current_step
+
+        # Calculate weighted components
+        weighted_dist = -0.05 * pot_dist  # negative because closer is better
+        weighted_orientation = 0.1 * pot_orientation
+        weighted_carrying = 0.5 * pot_carrying
+        weighted_expl = 0.025 * pot_expl
+        weighted_time = -0.025 * pot_time  # penalize as time goes
+
+        # Store components for visualization
+        self.potential_components = {
+            "pot_dist": pot_dist,
+            "pot_orientation": pot_orientation,
+            "pot_carrying": pot_carrying,
+            "pot_expl": pot_expl,
+            "pot_time": pot_time,
+            "weighted_dist": weighted_dist,
+            "weighted_orientation": weighted_orientation,
+            "weighted_carrying": weighted_carrying,
+            "weighted_expl": weighted_expl,
+            "weighted_time": weighted_time,
+            "current_objective_idx": current_objective_idx,
+            "objectives": self.objectives,
+        }
+
         potential = (
-            distance_potential * 2.0  # Distance is most important
-            + step_potential * 0.5  # Speed incentive
-            + orientation_potential * 0.3  # Orientation toward goal
-            + exploration_potential * 0.2  # Exploration bonus
+            weighted_dist
+            + weighted_orientation
+            + weighted_carrying
+            + weighted_expl
+            + weighted_time
         )
 
         return potential
 
-    def shaped_reward(self, base_reward, info, gamma=1):
-        """
-        Pure potential-based reward shaping that preserves optimal policy.
-        Formula: F(s,s') = γΦ(s') - Φ(s) where Φ is the potential function.
+    def get_potential_components(self):
+        """Return the previously calculated potential components"""
+        return self.potential_components
 
-        Args:
-            base_reward: Original environment reward
-            info: Environment info dictionary
-            previous_distance: Not used anymore, kept for compatibility
-            gamma: Discount factor
+    def shaped_reward(self, base_reward, info, gamma=0.99):
         """
-        # Calculate current and previous potential
+        Pure potential-based reward shaping using Φ(s) potential function.
+        Formula: F(s,s') = γΦ(s') - Φ(s)
+        """
+        # Calculate current potential
         current_potential = self.compute_potential(info)
 
-        # Initialize previous_potential attribute if not present
-        if not hasattr(self, "previous_potential"):
+        # First call in episode
+        if self.previous_potential is None:
             self.previous_potential = current_potential
+            return base_reward, base_reward
 
-        # Calculate potential-based shaping
+        # Calculate shaping
         shaping = gamma * current_potential - self.previous_potential
 
-        # Store current potential for next time
+        # Update for next call
         self.previous_potential = current_potential
 
-        # Return shaped reward
-        shaped_reward = base_reward + shaping
-
-        # Return the shaped reward and the original for logging
-        return shaped_reward, base_reward
+        # Return shaped reward and original reward
+        return base_reward + shaping, base_reward
 
     def choose_action(self, state, obs, info, testing=False):
         """
@@ -707,10 +678,12 @@ class DQNAgent:
         for episode in range(episodes):
             episode_start_time = time.time()
             obs, info = self.env.reset()
+
+            # Reset episode-specific variables and parse objectives
+            self.reset_episode(info)
+
             self.num_llm_calls = 0
             self.current_hint = ""
-            # Reset previous room tracking
-            self.prev_room = info["symbolic_state"]["agent"]["room"]
 
             state = self.preprocess_state(obs, info)
             total_reward = 0
@@ -732,6 +705,7 @@ class DQNAgent:
             train_steps = 0
 
             for step in range(self.env.max_steps):
+                self.current_step += 1
                 action, cost, state = self.choose_action(state, obs, info)
                 obs, reward, terminated, truncated, info = self.env.step(action)
 
@@ -934,10 +908,12 @@ class DQNAgent:
 
         for episode in range(episodes):
             obs, info = self.env.reset()
+
+            # Reset episode-specific variables and parse objectives
+            self.reset_episode(info)
+
             self.num_llm_calls = 0
             self.current_hint = ""
-            # Initialize previous room tracking for this episode
-            self.prev_room = info["symbolic_state"]["agent"]["room"]
 
             # Track current task
             current_task = self.env.task
@@ -950,6 +926,7 @@ class DQNAgent:
             state = self.preprocess_state(obs, info)
 
             for step in range(self.env.max_steps):
+                self.current_step += 1
                 action, cost, state = self.choose_action(state, obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
 
@@ -970,9 +947,6 @@ class DQNAgent:
                 # Track both types of rewards
                 total_reward += original_reward
                 total_shaped_reward += shaped_reward
-
-                # Update previous room for tracking only
-                self.prev_room = info["symbolic_state"]["agent"]["room"]
 
                 if render:
                     self.env.render()
