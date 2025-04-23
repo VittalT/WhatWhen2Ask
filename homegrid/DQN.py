@@ -158,10 +158,6 @@ class DQNAgent:
         self.per_beta_increment = 0.001
         self.per_epsilon = 0.01
 
-        # Reward shaping weight
-        self.distance_weight = 0.05
-        self.additional_weight = 1
-
         # Get observation shape from the environment (e.g. (96, 96, 3))
         self.obs_shape = self.env.observation_space["image"].shape
         # Number of actions from environment.
@@ -443,7 +439,7 @@ class DQNAgent:
         """Return the previously calculated potential components"""
         return self.potential_components
 
-    def shaped_reward(self, base_reward, info, gamma=0.99):
+    def shaped_reward(self, base_reward, info, gamma=1):
         """
         Pure potential-based reward shaping using Φ(s) potential function.
         Formula: F(s,s') = γΦ(s') - Φ(s)
@@ -666,6 +662,9 @@ class DQNAgent:
     def train(self, episodes=None):
         if episodes is None:
             episodes = self.episodes
+
+        # Set the model to training mode
+        self.model.train()
 
         # For tracking performance trends
         rewards_history = []
@@ -922,6 +921,9 @@ class DQNAgent:
         """Test the agent's performance over multiple episodes using both original and shaped rewards"""
         if episodes is None:
             episodes = self.episodes
+
+        # Set the model to evaluation mode
+        self.model.eval()
 
         total_rewards = []  # Original rewards
         shaped_rewards = []  # Shaped rewards

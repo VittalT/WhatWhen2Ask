@@ -268,7 +268,7 @@ class AgentSimulator:
 
         # Reset agent tracking
         self.agent.current_hint = ""
-        self.prev_distance = self.agent.compute_distance(info)
+        self.agent.reset_episode(info)
 
         # Get image
         img = obs["image"] if self.render_agent_view else self.env.get_frame()
@@ -294,10 +294,8 @@ class AgentSimulator:
         """Take a step in the environment and update visualizations."""
         obs, reward, terminated, truncated, info = self.env.step(action)
 
-        # Calculate shaped reward
-        shaped_reward, self.prev_distance, actual_reward = self.agent.shaped_reward(
-            reward, info, self.prev_distance
-        )
+        # Calculate shaped reward using the updated method
+        shaped_reward, actual_reward = self.agent.shaped_reward(reward, info)
 
         # Track rewards
         step_count = len(self.steps) + 1
@@ -328,7 +326,6 @@ class AgentSimulator:
         self.running = True
         obs, info = self.reset()
         state = self.agent.preprocess_state(obs, info)
-        self.prev_distance = self.agent.compute_distance(info)
 
         total_shaped_reward = 0
         total_actual_reward = 0
@@ -373,7 +370,6 @@ class AgentSimulator:
                 if self.running:
                     obs, info = self.reset()
                     state = self.agent.preprocess_state(obs, info)
-                    self.prev_distance = self.agent.compute_distance(info)
                     total_shaped_reward = 0
                     total_actual_reward = 0
                     success = False
