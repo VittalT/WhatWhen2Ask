@@ -1,0 +1,200 @@
+{
+    "average_original_reward": 0.2995,
+    "average_shaped_reward": -0.5657579281880671,
+    "success_rate": 29.959999999999997,
+    "average_steps_to_success": 11.828437917222963,
+    "task_success_rates": {
+        "open the recycling bin": {
+            "success_rate": 65.24216524216524,
+            "successes": 229,
+            "attempts": 351
+        },
+        "move the bottle to the kitchen": {
+            "success_rate": 93.97590361445783,
+            "successes": 78,
+            "attempts": 83
+        },
+        "move the fruit to the dining room": {
+            "success_rate": 46.25,
+            "successes": 37,
+            "attempts": 80
+        },
+        "get the fruit": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 249
+        },
+        "get the plates": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 259
+        },
+        "put the plates in the recycling bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 86
+        },
+        "get the papers": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 254
+        },
+        "find the compost bin": {
+            "success_rate": 6.493506493506493,
+            "successes": 10,
+            "attempts": 154
+        },
+        "move the papers to the dining room": {
+            "success_rate": 60.24096385542169,
+            "successes": 50,
+            "attempts": 83
+        },
+        "move the plates to the living room": {
+            "success_rate": 82.5,
+            "successes": 66,
+            "attempts": 80
+        },
+        "put the fruit in the recycling bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 96
+        },
+        "put the papers in the trash bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 98
+        },
+        "open the compost bin": {
+            "success_rate": 69.93865030674846,
+            "successes": 228,
+            "attempts": 326
+        },
+        "find the recycling bin": {
+            "success_rate": 6.432748538011696,
+            "successes": 11,
+            "attempts": 171
+        },
+        "move the papers to the kitchen": {
+            "success_rate": 100.0,
+            "successes": 80,
+            "attempts": 80
+        },
+        "find the fruit": {
+            "success_rate": 0.8403361344537815,
+            "successes": 1,
+            "attempts": 119
+        },
+        "open the trash bin": {
+            "success_rate": 75.39432176656152,
+            "successes": 239,
+            "attempts": 317
+        },
+        "get the bottle": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 233
+        },
+        "move the plates to the dining room": {
+            "success_rate": 54.54545454545454,
+            "successes": 48,
+            "attempts": 88
+        },
+        "move the fruit to the living room": {
+            "success_rate": 97.59036144578313,
+            "successes": 81,
+            "attempts": 83
+        },
+        "find the papers": {
+            "success_rate": 1.6260162601626018,
+            "successes": 2,
+            "attempts": 123
+        },
+        "put the bottle in the recycling bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 112
+        },
+        "put the papers in the recycling bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 70
+        },
+        "put the bottle in the compost bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 80
+        },
+        "put the plates in the trash bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 76
+        },
+        "move the plates to the kitchen": {
+            "success_rate": 101.21951219512195,
+            "successes": 83,
+            "attempts": 82
+        },
+        "find the plates": {
+            "success_rate": 3.361344537815126,
+            "successes": 4,
+            "attempts": 119
+        },
+        "find the bottle": {
+            "success_rate": 0.8771929824561403,
+            "successes": 1,
+            "attempts": 114
+        },
+        "move the fruit to the kitchen": {
+            "success_rate": 82.71604938271605,
+            "successes": 67,
+            "attempts": 81
+        },
+        "put the fruit in the compost bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 79
+        },
+        "move the bottle to the living room": {
+            "success_rate": 78.08219178082192,
+            "successes": 57,
+            "attempts": 73
+        },
+        "put the fruit in the trash bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 85
+        },
+        "find the trash bin": {
+            "success_rate": 4.142011834319527,
+            "successes": 7,
+            "attempts": 169
+        },
+        "put the bottle in the trash bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 105
+        },
+        "put the papers in the compost bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 89
+        },
+        "put the plates in the compost bin": {
+            "success_rate": 0.0,
+            "successes": 0,
+            "attempts": 97
+        },
+        "move the papers to the living room": {
+            "success_rate": 81.3953488372093,
+            "successes": 70,
+            "attempts": 86
+        },
+        "move the bottle to the dining room": {
+            "success_rate": 70.0,
+            "successes": 49,
+            "attempts": 70
+        }
+    },
+    "timestamp": "20250423_040446",
+    "episodes": 5000
+}
