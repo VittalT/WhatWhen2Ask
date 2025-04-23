@@ -56,15 +56,21 @@ def load_agent(
     if torch.cuda.is_available() and use_gpu:
         agent.batch_size = agent.batch_size * batch_size_multiplier
 
+    # Track the episode number of the loaded checkpoint for proper numbering of future checkpoints
+    loaded_episode = 0
+
     if checkpoint_path is not None:
         # Handle both direct paths and episode numbers
         if isinstance(checkpoint_path, int):
+            loaded_episode = checkpoint_path
             checkpoint_path = os.path.join(
                 training_dir, f"model_checkpoint_{checkpoint_path}.pth"
             )
 
         elif str(checkpoint_path).lower() == "best":
             checkpoint_path = os.path.join(training_dir, "best_model.pth")
+            # For "best" model, try to extract the episode number from the checkpoint
+            # This will be set from the checkpoint data below
 
         elif str(checkpoint_path).lower() == "final":
             # Look for the most recent final model
@@ -96,6 +102,13 @@ def load_agent(
             agent.epsilon = checkpoint["epsilon"]
         if "total_steps" in checkpoint:
             agent.total_steps = checkpoint["total_steps"]
+        if "episode" in checkpoint:
+            loaded_episode = checkpoint["episode"]
+            print(f"Loaded from episode {loaded_episode}")
+
+        # Store the loaded episode number in the agent for proper checkpoint naming
+        agent.previous_episode = loaded_episode
+
         print(
             f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
         )
@@ -713,7 +726,7 @@ batch_size_multiplier = (
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints12"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints13"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -784,28 +797,44 @@ if __name__ == "__main__":
     # OPTION 3: Test code quickly to check it doesnt break
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=10,
-        save_interval=5,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=10,
+    #     save_interval=5,
+    #     use_gpu=True,
+    # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            5,
-            10,
-            5,
-        ),
-        test_episodes=100,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         5,
+    #         10,
+    #         5,
+    #     ),
+    #     test_episodes=100,
+    #     use_gpu=True,
+    # )
 
-    test_agent(checkpoint="best", num_episodes=100, use_gpu=True)
+    # train_agent(
+    #     num_episodes=10,
+    #     continue_from=10,
+    #     save_interval=5,
+    #     use_gpu=True,
+    # )
+
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         10,
+    #         20,
+    #         5,
+    #     ),
+    #     test_episodes=100,
+    #     use_gpu=True,
+    # )
+
+    # test_agent(checkpoint="best", num_episodes=100, use_gpu=True)
 
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    """
     train_agent(
         num_episodes=6000,
         save_interval=500,
@@ -814,14 +843,30 @@ if __name__ == "__main__":
 
     evaluate_checkpoints(
         checkpoint_range=(
-            2000,
+            1000,
             6000,
-            2000,
+            1000,
         ),
         test_episodes=5000,
         use_gpu=True,
     )
-    """
+
+    train_agent(
+        num_episodes=14000,
+        continue_from=6000,
+        save_interval=500,
+        use_gpu=True,
+    )
+
+    evaluate_checkpoints(
+        checkpoint_range=(
+            6000,
+            20000,
+            2000,
+        ),
+        test_episodes=10000,
+        use_gpu=True,
+    )
 
     # OPTION 5: Quick test of a specific checkpoint
     # Uncomment to use:

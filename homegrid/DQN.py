@@ -140,6 +140,9 @@ class DQNAgent:
         self.max_llm_calls = 0  # Disable LLM queries for pure DQN training
         self.current_hint = ""
 
+        # Track episode number from previous training
+        self.previous_episode = 0
+
         # Target network update frequency (update every N steps)
         self.target_update_freq = 500
         self.total_steps = 0
@@ -676,6 +679,9 @@ class DQNAgent:
         no_improvement_count = 0
 
         for episode in range(episodes):
+            # Calculate actual episode number including previous training
+            actual_episode = episode + self.previous_episode
+
             episode_start_time = time.time()
             obs, info = self.env.reset()
 
@@ -698,7 +704,9 @@ class DQNAgent:
             # Verbose logging every 500 episodes or as needed
             verbose = episode % 500 == 0
             if verbose:
-                print(f"\nEpisode {episode + 1}/{episodes}, Task: {task_id}")
+                print(
+                    f"\nEpisode {actual_episode + 1}/{self.previous_episode + episodes}, Task: {task_id}"
+                )
                 print(f"Current epsilon: {self.epsilon:.3f}")
 
             episode_loss = 0.0
@@ -773,7 +781,7 @@ class DQNAgent:
                 )
 
                 print(
-                    f"Episode {episode + 1}/{episodes}, "
+                    f"Episode {actual_episode + 1}/{self.previous_episode + episodes}, "
                     f"Time: {episode_time:.2f}s (Avg: {avg_time_per_episode:.2f}s), "
                     f"Shaped Reward: {total_reward:.4f}, "
                     f"Original Reward: {original_reward_sum:.2f}, "
@@ -801,7 +809,8 @@ class DQNAgent:
                             "model_state_dict": self.model.state_dict(),
                             "optimizer_state_dict": self.optimizer.state_dict(),
                             "epsilon": self.epsilon,
-                            "episode": episode,
+                            "episode": actual_episode
+                            + 1,  # Store the next episode number
                             "total_steps": self.total_steps,
                             "avg_reward": avg_recent_reward,
                             "env_info": self.env_info,
@@ -825,13 +834,13 @@ class DQNAgent:
             # Save checkpoint less frequently to speed up training
             if (episode + 1) % self.checkpoint_interval == 0:
                 checkpoint_path = os.path.join(
-                    self.training_dir, f"model_checkpoint_{episode+1}.pth"
+                    self.training_dir, f"model_checkpoint_{actual_episode+1}.pth"
                 )
                 checkpoint_data = {
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "epsilon": self.epsilon,
-                    "episode": episode,
+                    "episode": actual_episode + 1,  # Store the next episode number
                     "total_steps": self.total_steps,
                 }
                 torch.save(checkpoint_data, checkpoint_path)
@@ -863,9 +872,20 @@ class DQNAgent:
                             label=f"Moving Avg (Window={window_size})",
                         )
 
-                    plt.title(f"Learning Curve - Rewards (Episode {episode+1})")
+                    plt.title(f"Learning Curve - Rewards (Episode {actual_episode+1})")
                     plt.ylabel("Shaped Reward")
                     plt.legend()
+
+                    # Plot original rewards
+                    plt.subplot(2, 1, 2)
+
+                    # Plot raw original rewards in light color
+                    plt.plot(
+                        original_rewards_history,
+                        "c-",
+                        alpha=0.3,
+                        label="Raw Original Rewards",
+                    )
 
                     # Calculate moving average of original rewards
                     if len(original_rewards_history) > 100:
@@ -878,20 +898,22 @@ class DQNAgent:
                             )
                         ]
 
-                        plt.subplot(2, 1, 2)
                         plt.plot(
                             range(window_size - 1, episode + 1),
                             original_reward_moving_avg,
+                            "c-",
+                            linewidth=2,
+                            label=f"Moving Avg (Window={window_size})",
                         )
-                        plt.title(
-                            f"Original Reward (Moving Average, Window={window_size})"
-                        )
+
+                        plt.title(f"Original Reward (Episode {actual_episode+1})")
                         plt.xlabel("Episode")
                         plt.ylabel("Original Reward")
+                        plt.legend()
 
                     plt.tight_layout()
                     plot_path = os.path.join(
-                        self.training_dir, f"learning_curve_{episode+1}.png"
+                        self.training_dir, f"learning_curve_{actual_episode+1}.png"
                     )
                     plt.savefig(plot_path)
                     plt.close()
