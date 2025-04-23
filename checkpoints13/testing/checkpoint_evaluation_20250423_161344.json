@@ -1,0 +1,49 @@
+{
+    "metadata": {
+        "timestamp": "20250423_161344",
+        "checkpoint_range": [
+            3000,
+            18000,
+            3000
+        ],
+        "test_episodes_per_checkpoint": 10000,
+        "checkpoints_tested": 7,
+        "total_evaluation_time_seconds": 5567.884262084961,
+        "device": "cuda",
+        "gpu_info": "NVIDIA GeForce RTX 4090 - 1 device(s)"
+    },
+    "results": {
+        "0": {
+            "original_reward": 0.3056,
+            "shaped_reward": -0.5512562613353869
+        },
+        "3000": {
+            "original_reward": 0.29315,
+            "shaped_reward": -0.5757409600775477
+        },
+        "6000": {
+            "original_reward": 0.29195,
+            "shaped_reward": -0.5754762595037938
+        },
+        "9000": {
+            "original_reward": 0.2884,
+            "shaped_reward": -0.5785799496709424
+        },
+        "12000": {
+            "original_reward": 0.2884,
+            "shaped_reward": -0.5800946797550826
+        },
+        "15000": {
+            "original_reward": 0.29205,
+            "shaped_reward": -0.5795078957061898
+        },
+        "18000": {
+            "original_reward": 0.2884,
+            "shaped_reward": -0.5794224431556472
+        },
+        "best": {
+            "original_reward": 0.2959,
+            "shaped_reward": -0.5748937065936007
+        }
+    }
+}
