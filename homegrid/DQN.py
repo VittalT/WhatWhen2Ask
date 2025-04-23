@@ -296,154 +296,200 @@ class DQNAgent:
 
         return entropy / max_entropy
 
-    def compute_distance(self, info):
+    def compute_task_components(self, info):
         """
-        Compute the distance between the agent and task-relevant objects with improved handling
-        for different task structures.
+        Identify task-relevant components and the agent's current relation to them.
+        Returns structured data about source, destination, carrying status, and next objective.
         """
         agent_pos = info["symbolic_state"]["agent"]["pos"]
         agent_room = info["symbolic_state"]["agent"]["room"].lower()
+        agent_dir = info["symbolic_state"]["agent"]["dir"]
         carried_obj = info["symbolic_state"]["agent"]["carrying"]
         carried_name = carried_obj.lower() if carried_obj is not None else None
         task_text = self.env.task.lower()
 
-        # Try to extract source and destination objects from task
-        task_parts = task_text.split(" to ")
-        source_part = task_parts[0]
-        dest_part = task_parts[1] if len(task_parts) > 1 else ""
+        # Parse task to identify source and destination objects
+        has_destination = " to " in task_text
+        if has_destination:
+            parts = task_text.split(" to ")
+            source_part = parts[0].strip()
+            dest_part = parts[1].strip()
+        else:
+            # Handle tasks without a destination (e.g., "get the apple")
+            source_part = task_text
+            dest_part = ""
 
-        # Determine which objects we should be tracking distances to
-        target_distances = {}
-
-        # Process all objects in the environment
+        # Find relevant objects with positions
+        relevant_objects = {}
         for obj in info["symbolic_state"]["objects"] + self.env.rooms:
             obj_name = obj["name"].lower()
-            obj_pos = obj["pos"]
-            obj_room = (
-                obj["room"].lower() if "room" in obj and obj["room"] is not None else ""
-            )
 
-            # Skip the object if we're already carrying it
-            if carried_name is not None and carried_name == obj_name:
+            # Check relevance to task
+            is_source = obj_name in source_part
+            is_dest = obj_name in dest_part
+
+            if is_source or is_dest:
+                relevant_objects[obj_name] = {
+                    "pos": obj["pos"],
+                    "room": (
+                        obj["room"].lower()
+                        if "room" in obj and obj["room"] is not None
+                        else ""
+                    ),
+                    "is_source": is_source,
+                    "is_dest": is_dest,
+                    "priority": (
+                        source_part.find(obj_name)
+                        if is_source
+                        else dest_part.find(obj_name)
+                    ),
+                }
+
+        # Determine next objective
+        carrying_source = carried_name is not None and carried_name in source_part
+
+        # If carrying source and there's a destination, next objective is the destination
+        if carrying_source and has_destination:
+            next_objective = "destination"
+        # Otherwise, next objective is the source
+        else:
+            next_objective = "source"
+
+        # Find closest object for each category (source/destination)
+        closest = {"source": None, "destination": None}
+        for obj_name, obj_data in relevant_objects.items():
+            category = "source" if obj_data["is_source"] else "destination"
+
+            # Skip if this is the carried object (we already have it)
+            if carried_name == obj_name:
                 continue
 
-                # Calculate basic distance
+            # Calculate distance
             euclidean_dist = np.linalg.norm(
-                np.array(agent_pos, dtype=float) - np.array(obj_pos, dtype=float)
+                np.array(agent_pos, dtype=float)
+                - np.array(obj_data["pos"], dtype=float)
             )
 
-            # Add room penalty if object is in a different room
-            room_penalty = 5 if obj_room and obj_room != agent_room else 0
+            # Add room penalty if in different room
+            room_penalty = (
+                5 if obj_data["room"] and obj_data["room"] != agent_room else 0
+            )
             total_dist = euclidean_dist + room_penalty
 
-            # Check if this object is relevant to the task
-            in_source = obj_name in source_part
-            in_dest = obj_name in dest_part
+            # Calculate orientation factor (how directly agent is facing the object)
+            dx = obj_data["pos"][0] - agent_pos[0]
+            dy = obj_data["pos"][1] - agent_pos[1]
 
-            if in_source or in_dest:
-                # Set distance with a priority flag: source objects first, then destination
-                priority = 0 if in_source else 1
-                target_distances[(priority, obj_name)] = total_dist
+            # Convert agent direction to angle (0=right, 1=down, 2=left, 3=up)
+            agent_angles = [0, 90, 180, 270]  # in degrees
+            agent_angle = agent_angles[agent_dir]
 
-        # If we're carrying the source object and there's a destination, prioritize destination distances
-        if carried_name is not None and carried_name in source_part and dest_part:
-            # Find the closest destination-related object
-            dest_distances = {k: v for k, v in target_distances.items() if k[0] == 1}
-            if dest_distances:
-                closest_dest = min(dest_distances.items(), key=lambda x: x[1])
-                return closest_dest[1]
+            # Calculate angle to object (in degrees)
+            obj_angle = np.degrees(np.arctan2(dy, dx)) % 360
 
-        # If we haven't returned yet, use the first mentioned relevant object
-        if target_distances:
-            # Sort by priority first (source=0, dest=1), then by order of mention in the task
-            sorted_distances = sorted(
-                target_distances.items(),
-                key=lambda x: (x[0][0], task_text.find(x[0][1])),
+            # Calculate how well agent is oriented toward object (1 = perfect, 0 = opposite)
+            angle_diff = min(
+                abs(agent_angle - obj_angle), 360 - abs(agent_angle - obj_angle)
             )
-            return sorted_distances[0][1]
+            orientation_factor = max(0, 1 - angle_diff / 180)
 
-        # Fallback distance if no relevant objects found
-        return 20.0
+            obj_data.update({"distance": total_dist, "orientation": orientation_factor})
 
-    def shaped_reward(self, base_reward, info, previous_distance, gamma=0.99):
-        """Enhanced reward shaping optimized for sparse rewards environment"""
-        # Get current distance to relevant objects
-        current_distance = self.compute_distance(info)
+            # Update closest object if this is closer or first one found
+            if closest[category] is None or total_dist < closest[category]["distance"]:
+                closest[category] = obj_data
 
-        # Base distance-based shaping using potential-based approach (ensures consistency)
-        potential_current = (
-            -current_distance
-        )  # Negative because smaller distance is better
-        potential_previous = -previous_distance
-        distance_reward = gamma * potential_current - potential_previous
+        return {
+            "carrying_source": carrying_source,
+            "has_destination": has_destination,
+            "next_objective": next_objective,
+            "closest_source": closest["source"],
+            "closest_dest": closest["destination"],
+            "agent_pos": agent_pos,
+            "agent_room": agent_room,
+            "current_step": self.env.step_cnt,
+            "visited_rooms": getattr(self, "visited_rooms", set()),
+        }
 
-        # Get task-related information
-        task_text = self.env.task.lower()
-        carrying = info["symbolic_state"]["agent"]["carrying"]
-        carrying_str = carrying.lower() if carrying is not None else ""
-        front_obj = info["symbolic_state"]["front_obj"] or ""
-        front_obj_str = front_obj.lower()
-        current_room = info["symbolic_state"]["agent"]["room"]
+    def compute_potential(self, info):
+        """
+        Compute a potential function for reward shaping.
+        Higher potential = closer to goal completion.
+        """
+        # Initialize or update visited rooms set
+        if not hasattr(self, "visited_rooms"):
+            self.visited_rooms = set()
+        self.visited_rooms.add(info["symbolic_state"]["agent"]["room"])
 
-        # Create a more detailed shaping reward
-        additional_reward = 0
+        # Get task components
+        task_data = self.compute_task_components(info)
 
-        # Significant progress markers get bigger rewards
+        # Start with base potential
+        potential = 0
 
-        # 1. Carrying task-relevant object
-        if carrying is not None and carrying_str in task_text:
-            # Check if this object is the first mentioned in the task (likely the most important)
-            if (
-                task_text.find(carrying_str) < task_text.find("to")
-                and "to" in task_text
-            ):
-                additional_reward += 0.2  # Higher reward for the main object
-            else:
-                additional_reward += 0.1
+        # Component 1: Distance to objective (negative because closer is better)
+        distance_potential = 0
+        if task_data["next_objective"] == "source" and task_data["closest_source"]:
+            distance_potential -= task_data["closest_source"]["distance"]
+        elif task_data["next_objective"] == "destination" and task_data["closest_dest"]:
+            distance_potential -= task_data["closest_dest"]["distance"]
 
-        # 2. Facing task-relevant object
-        if front_obj_str and front_obj_str in task_text:
-            # If not carrying anything and facing key object, bigger reward
-            if (
-                carrying is None
-                and task_text.find(front_obj_str) < task_text.find("to")
-                and "to" in task_text
-            ):
-                additional_reward += 0.1
-            else:
-                additional_reward += 0.05
+        # Component 2: Step discount (encourage faster completion)
+        step_factor = max(0, 1 - task_data["current_step"] / self.env.max_steps)
+        step_potential = 5 * step_factor  # Scale appropriately
 
-        # 3. Room exploration and navigation
-        if self.prev_room is not None and self.prev_room != current_room:
-            # Bigger reward for first room change to encourage exploration
-            if self.total_steps < 100:
-                additional_reward += 0.3
-            else:
-                additional_reward += 0.15
+        # Component 3: Orientation toward objective
+        orientation_potential = 0
+        if task_data["next_objective"] == "source" and task_data["closest_source"]:
+            orientation_potential = 2 * task_data["closest_source"]["orientation"]
+        elif task_data["next_objective"] == "destination" and task_data["closest_dest"]:
+            orientation_potential = 2 * task_data["closest_dest"]["orientation"]
 
-        # 4. Getting close to target locations (if task has "to" directive)
-        if "to" in task_text:
-            # Extract destination
-            destination_part = task_text.split("to")[1].strip()
-            if current_room.lower() in destination_part:
-                additional_reward += 0.1  # Reward for being in target room
+        # Component 5: Exploration (encourage visiting all rooms)
+        total_rooms = len(self.env.rooms)
+        exploration_potential = 2 * (
+            len(task_data["visited_rooms"]) / max(1, total_rooms)
+        )
 
-        # Ensure very positive base rewards remain dominant
-        if base_reward > 0.5:
-            shaped_reward = base_reward
-        else:
-            # Apply shaping only for non-success states
-            shaped_reward = (
-                base_reward
-                + (self.distance_weight * distance_reward)
-                + (self.additional_weight * additional_reward)
-            )
+        # Sum all components with weights
+        potential = (
+            distance_potential * 2.0  # Distance is most important
+            + step_potential * 0.5  # Speed incentive
+            + orientation_potential * 0.3  # Orientation toward goal
+            + exploration_potential * 0.2  # Exploration bonus
+        )
 
-        # Update previous room for next step
-        self.prev_room = current_room
+        return potential
 
-        # Return both the shaped reward (for learning) and the original reward (for logging)
-        return shaped_reward, current_distance, base_reward
+    def shaped_reward(self, base_reward, info, gamma=1):
+        """
+        Pure potential-based reward shaping that preserves optimal policy.
+        Formula: F(s,s') = γΦ(s') - Φ(s) where Φ is the potential function.
+
+        Args:
+            base_reward: Original environment reward
+            info: Environment info dictionary
+            previous_distance: Not used anymore, kept for compatibility
+            gamma: Discount factor
+        """
+        # Calculate current and previous potential
+        current_potential = self.compute_potential(info)
+
+        # Initialize previous_potential attribute if not present
+        if not hasattr(self, "previous_potential"):
+            self.previous_potential = current_potential
+
+        # Calculate potential-based shaping
+        shaping = gamma * current_potential - self.previous_potential
+
+        # Store current potential for next time
+        self.previous_potential = current_potential
+
+        # Return shaped reward
+        shaped_reward = base_reward + shaping
+
+        # Return the shaped reward and the original for logging
+        return shaped_reward, base_reward
 
     def choose_action(self, state, obs, info, testing=False):
         """
@@ -669,7 +715,6 @@ class DQNAgent:
             state = self.preprocess_state(obs, info)
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
-            prev_distance = self.compute_distance(info)
             task_id = self.env.task
             if task_id not in self.replay_buffer:
                 self.replay_buffer[task_id] = {
@@ -699,9 +744,7 @@ class DQNAgent:
                         print(f"  Step {step}: Got reward {reward}! Success!")
 
                 # Apply reward shaping but keep track of original reward
-                shaped_reward, prev_distance, original_reward = self.shaped_reward(
-                    reward, info, prev_distance
-                )
+                shaped_reward, original_reward = self.shaped_reward(reward, info)
                 shaped_reward -= cost
                 original_reward -= cost
 
@@ -905,7 +948,6 @@ class DQNAgent:
             total_reward = 0  # Original reward
             total_shaped_reward = 0  # Shaped reward
             state = self.preprocess_state(obs, info)
-            prev_distance = self.compute_distance(info)
 
             for step in range(self.env.max_steps):
                 action, cost, state = self.choose_action(state, obs, info, testing=True)
@@ -919,9 +961,7 @@ class DQNAgent:
                     task_success_rates[current_task]["successes"] += 1
 
                 # Get shaped reward for tracking
-                shaped_reward, prev_distance, original_reward = self.shaped_reward(
-                    reward, info, prev_distance
-                )
+                shaped_reward, original_reward = self.shaped_reward(reward, info)
 
                 # Subtract costs from both
                 shaped_reward -= cost
