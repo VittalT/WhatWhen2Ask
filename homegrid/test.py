@@ -726,7 +726,7 @@ batch_size_multiplier = (
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints13"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints14"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -797,21 +797,21 @@ if __name__ == "__main__":
     # OPTION 3: Test code quickly to check it doesnt break
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=10,
-    #     save_interval=5,
-    #     use_gpu=True,
-    # )
+    train_agent(
+        num_episodes=10,
+        save_interval=5,
+        use_gpu=True,
+    )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         5,
-    #         10,
-    #         5,
-    #     ),
-    #     test_episodes=100,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            5,
+            10,
+            5,
+        ),
+        test_episodes=100,
+        use_gpu=True,
+    )
 
     # train_agent(
     #     num_episodes=10,
@@ -858,15 +858,15 @@ if __name__ == "__main__":
     #     use_gpu=True,
     # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            3000,
-            18000,
-            3000,
-        ),
-        test_episodes=10000,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         3000,
+    #         18000,
+    #         3000,
+    #     ),
+    #     test_episodes=10000,
+    #     use_gpu=True,
+    # )
 
     # OPTION 5: Quick test of a specific checkpoint
     # Uncomment to use:

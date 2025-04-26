@@ -7,6 +7,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 import numpy as np
 from tokenizers import Tokenizer
 import cv2
+from pprint import pprint
 
 from homegrid.window import Window
 from homegrid.DQN import DQNAgent, get_fasttext_embedding
@@ -284,7 +285,12 @@ def step(env, window, action, agent_view=False):
             print(f"  {marker} {i}: {obj['name']} at pos {obj['pos']}")
 
     print("-" * 20)
-    print("Info: ", info)
+    print("Info: ", obs["token_embed"].shape, obs["image"].shape)
+    a = "obs, reward, terminated, truncated, info"
+    b = obs, reward, terminated, truncated, info
+    for x, y in zip(a, b):
+        pprint(x)
+        pprint(y)
 
     window.set_caption(
         f"r={reward:.2f} token_id={obs['token']} token="
