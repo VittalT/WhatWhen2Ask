@@ -149,7 +149,7 @@ class DQNAgent:
 
         # Memory parameters
         self.replay_buffer = {}
-        self.max_replay_buffer_size = 1000  # Reduced for computational efficiency
+        self.max_replay_buffer_size = 250 # Reduced for computational efficiency
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -177,7 +177,7 @@ class DQNAgent:
         )  # Changed to 'none' for prioritized replay
 
         # Initialize LLMHelper (assumed implemented in BLIP2Helper)
-        self.llm_helper = BLIP2Helper()
+        self.llm_helper = None # BLIP2Helper()
         self.hint_threshold = 0.95
 
         # Checkpoint interval (save model every N episodes)

@@ -826,21 +826,21 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=6000,
-    #     save_interval=500,
-    #     use_gpu=True,
-    # )
+    train_agent(
+        num_episodes=6000,
+        save_interval=500,
+        use_gpu=True,
+    )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         1000,
-    #         6000,
-    #         1000,
-    #     ),
-    #     test_episodes=5000,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            1000,
+            6000,
+            1000,
+        ),
+        test_episodes=5000,
+        use_gpu=True,
+    )
 
     # train_agent(
     #     num_episodes=14000,
@@ -873,11 +873,11 @@ if __name__ == "__main__":
     # OPTION 6: Run a quick benchmark to estimate runtime for larger training
     # Uncomment to use:
 
-    benchmark_performance(
-        train_episodes=20,  # Quick training benchmark with 20 episodes
-        test_episodes=100,  # Test benchmark with 100 episodes
-        use_gpu=True,  # Use GPU if available
-    )
+    # benchmark_performance(
+    #     train_episodes=20,  # Quick training benchmark with 20 episodes
+    #     test_episodes=100,  # Test benchmark with 100 episodes
+    #     use_gpu=True,  # Use GPU if available
+    # )
 
     # Close the logger at the end of execution
     if isinstance(sys.stdout, Logger):
