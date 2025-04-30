@@ -57,6 +57,6 @@ class RGBImgPartialObsWrapper(ObservationWrapper):
         )
 
     def observation(self, obs):
-        rgb_img_partial = self.get_frame(tile_size=self.tile_size, agent_pov=True)
+        rgb_img_partial = self.get_frame(tile_size=self.tile_size, agent_pov=False)
 
         return {**obs, "symbolic_image": obs["image"], "image": rgb_img_partial}

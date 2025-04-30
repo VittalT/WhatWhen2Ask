@@ -9,6 +9,7 @@ import torch
 from homegrid.window import Window
 from homegrid.DQN import DQNAgent, get_fasttext_embedding
 from tokenizers import Tokenizer
+from homegrid.LLM import LLMAgent
 import argparse
 import os
 
@@ -20,7 +21,7 @@ class AgentSimulator:
         self,
         env_name="homegrid-task",
         model_path="best",
-        rate=0.5,
+        rate=0.1,
         render_agent_view=False,
         checkpoint_number=9,
         episode_number=None,
@@ -77,48 +78,52 @@ class AgentSimulator:
         checkpoint_dir = f"checkpoints{self.checkpoint_number}"
         training_dir = os.path.join(checkpoint_dir, "training")
 
-        agent = DQNAgent(
-            env_name=self.env.unwrapped.spec.id, checkpoint_dir=checkpoint_dir
-        )
-        agent.env = self.env  # Connect agent to environment
-
-        # Handle different checkpoint formats
-        if isinstance(model_path, int):
-            checkpoint_path = os.path.join(
-                training_dir, f"model_checkpoint_{model_path}.pth"
+        if any(x in model_path for x in ["blip", "gpt", "o1", "o2", "o3", "o4"]):
+            agent = LLMAgent(
+                model_name=model_path,
+                env_name=self.env.unwrapped.spec.id,
+                checkpoint_dir=checkpoint_dir,
             )
-        elif model_path.lower() == "best":
-            checkpoint_path = os.path.join(training_dir, "best_model.pth")
-        elif model_path.lower() == "final":
-            # Look for the most recent final model
-            final_models = []
-            final_models.extend(
-                [
-                    os.path.join(training_dir, f)
-                    for f in os.listdir(training_dir)
-                    if f.startswith("final_model_") and f.endswith(".pth")
-                ]
-            )
-
-            if final_models:
-                # Sort by modification time, newest first
-                checkpoint_path = sorted(
-                    final_models, key=os.path.getmtime, reverse=True
-                )[0]
         else:
-            checkpoint_path = model_path
+            # Handle different checkpoint formats
+            if isinstance(model_path, int):
+                checkpoint_path = os.path.join(
+                    training_dir, f"model_checkpoint_{model_path}.pth"
+                )
+            elif model_path.lower() == "best":
+                checkpoint_path = os.path.join(training_dir, "best_model.pth")
+            elif model_path.lower() == "final":
+                # Look for the most recent final model
+                final_models = []
+                final_models.extend(
+                    [
+                        os.path.join(training_dir, f)
+                        for f in os.listdir(training_dir)
+                        if f.startswith("final_model_") and f.endswith(".pth")
+                    ]
+                )
 
-        print(f"Loading model from: {checkpoint_path}")
-        checkpoint = torch.load(
-            checkpoint_path, map_location=device, weights_only=False
-        )
-        agent.model.load_state_dict(checkpoint["model_state_dict"])
-        if "epsilon" in checkpoint:
-            agent.epsilon = checkpoint["epsilon"]
-        print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
+                if final_models:
+                    # Sort by modification time, newest first
+                    checkpoint_path = sorted(
+                        final_models, key=os.path.getmtime, reverse=True
+                    )[0]
+            else:
+                checkpoint_path = model_path
 
-        # Set to evaluation mode
-        agent.model.eval()
+            print(f"Loading model from: {checkpoint_path}")
+            checkpoint = torch.load(
+                checkpoint_path, map_location=device, weights_only=False
+            )
+            agent.model.load_state_dict(checkpoint["model_state_dict"])
+            if "epsilon" in checkpoint:
+                agent.epsilon = checkpoint["epsilon"]
+            print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
+
+            # Set to evaluation mode
+            agent.model.eval()
+
+        agent.env = self.env  # Connect agent to environment
         return agent
 
     def setup_visualization(self):
@@ -384,7 +389,7 @@ class AgentSimulator:
 
 def simulate_agent(
     model_path="best",
-    rate=0.5,
+    rate=0.1,
     env_name="homegrid-task",
     agent_view=False,
     checkpoint_number=9,
@@ -423,7 +428,7 @@ if __name__ == "__main__":
         help='Path to the model or "best" for best model',
     )
     parser.add_argument(
-        "--rate", type=float, default=0.5, help="Time delay between steps (seconds)"
+        "--rate", type=float, default=0.1, help="Time delay between steps (seconds)"
     )
     parser.add_argument(
         "--env", type=str, default="homegrid-task", help="Environment name"
