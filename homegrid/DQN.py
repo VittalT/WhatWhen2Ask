@@ -56,13 +56,13 @@ class DQN(nn.Module):
 
         # CNN branch - optimized for computational efficiency
         self.cnn = nn.Sequential(
-            nn.Conv2d(observation_shape[2], 16, kernel_size=8, stride=4),
+            nn.Conv2d(observation_shape[2], 16, kernel_size=16, stride=8),
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=4, stride=2),
+            nn.Conv2d(16, 32, kernel_size=8, stride=4),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=1),
+            nn.Conv2d(32, 32, kernel_size=4, stride=2),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Flatten(),
@@ -158,8 +158,10 @@ class DQNAgent:
         self.per_beta_increment = 0.001
         self.per_epsilon = 0.01
 
-        # Get observation shape from the environment (e.g. (96, 96, 3))
+        # Get observation shape from the environment (e.g. (384, 448, 3))
         self.obs_shape = self.env.observation_space["image"].shape
+        self.obs_shape = (384, 448, 3)
+        # print("obs_shape", self.obs_shape)
         # Number of actions from environment.
         self.output_dim = self.env.action_space.n
 
@@ -246,6 +248,7 @@ class DQNAgent:
 
         if encode_context:
             # Create observation tensor and move to device
+            # visualize_image(obs["image"])
             observation = (
                 torch.FloatTensor(obs["image"] / 255.0)
                 .permute(2, 0, 1)
@@ -473,6 +476,7 @@ class DQNAgent:
             info: Info dict from environment
             testing: If True, disable exploration and always choose greedy action
         """
+        # print(obs["image"].shape)
         uncertainty = self.uncertainty_score(state)
         cost = 0
 
