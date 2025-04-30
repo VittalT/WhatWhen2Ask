@@ -146,15 +146,6 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
     agent = load_agent(continue_from, use_gpu=use_gpu)
     agent.checkpoint_interval = save_interval  # Set custom checkpoint interval
 
-    # Optimize batch size for GPU
-    if use_gpu and torch.cuda.is_available():
-        original_batch_size = agent.batch_size
-        # Increase batch size for better GPU utilization
-        agent.batch_size = original_batch_size * batch_size_multiplier
-        print(
-            f"GPU detected: Increasing batch size from {original_batch_size} to {agent.batch_size}"
-        )
-
     # Log training metadata with hardware info
     gpu_info = "None"
     if torch.cuda.is_available():
@@ -883,11 +874,10 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     benchmark_performance(
-        train_episodes=20,          # Quick training benchmark with 20 episodes
-        test_episodes=100,          # Test benchmark with 100 episodes
-        use_gpu=True                # Use GPU if available
+        train_episodes=20,  # Quick training benchmark with 20 episodes
+        test_episodes=100,  # Test benchmark with 100 episodes
+        use_gpu=True,  # Use GPU if available
     )
-
 
     # Close the logger at the end of execution
     if isinstance(sys.stdout, Logger):
