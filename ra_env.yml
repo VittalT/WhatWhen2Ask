@@ -1,18 +1,17 @@
-name: RA_env
+name: base
 channels:
   - https://repo.anaconda.com/pkgs/main
   - https://repo.anaconda.com/pkgs/r
 dependencies:
-  - gym
-  - matplotlib
-  - numpy
+  - python=3.12
+  - conda==25.1.1
+  - setuptools
   - pip
-  - python=3.9
-  - pytorch
-  - torchaudio
-  - torchvision
-  - tqdm
-  - pillow
-  - requests
-  - black
-prefix: /opt/anaconda3/envs/RA_env
+  - wheel
+  - conda-anaconda-telemetry
+  - conda-anaconda-tos[version='>=0.1.2']
+  - conda-content-trust
+  - conda-libmamba-solver
+  - menuinst
+  - anaconda-anon-usage
+prefix: /home/vittalt/miniconda3
