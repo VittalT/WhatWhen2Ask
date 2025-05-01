@@ -34,89 +34,165 @@ def visualize_image(image):
 
 
 class DQN(nn.Module):
-    def __init__(self, observation_shape, num_actions, embed_dim=EMBED_DIM):
-        """
-        Multi-modal DQN that processes:
-        - An observation (e.g. image) via a CNN.
-        - A context vector arranged as follows:
-            * First 300 dimensions: task embedding.
-             * Remaining 904 dimensions: direction (4 dims), carrying embedding (300 dims),
-                front object embedding (300 dims), and hint embedding (300 dims).
-        The network processes the task and non-task parts of the context via separate branches.
-        """
-        super(DQN, self).__init__()
+    def __init__(self, num_actions, task_embed_dim=384, hint_embed_dim=385):
+        super().__init__()
 
-        # Define dimensions for context components
-        # Task branch: first 300 dims
-        task_dim = embed_dim  # 300
-        # Non-task branch: remaining context
-        non_task_dim = (
-            4 + 3 * embed_dim
-        )  # one-hot (4) + carrying (300) + front object (300) + hint (300) = 904
+        # === Agent State Processing ===
+        # Position: (x, y) normalized by (12, 10)
+        # Direction: One-hot encoded (4 dims) normalized by 4
+        # Inventory: 5 dims (one hot + none)
+        self.agent_state_proj = nn.Sequential(
+            nn.Linear(2 + 4 + 5, 64),  # 2 (pos) + 4 (dir) + 5 (inv)
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+        )
 
-        # CNN branch - optimized for computational efficiency
-        self.cnn = nn.Sequential(
-            nn.Conv2d(observation_shape[2], 16, kernel_size=16, stride=8),
-            nn.BatchNorm2d(16),
+        # === Context Processing ===
+        # Task: all-MiniLM-L6-v2 Sentence transformer (384)
+        # LLM hint: all-MiniLM-L6-v2 Sentence transformer + 1 for flag (385)
+        self.context_proj = nn.Sequential(
+            nn.Linear(task_embed_dim + hint_embed_dim, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=8, stride=4),
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=4, stride=2),
+            nn.Linear(256, 128),
+        )
+
+        # === Observation Processing ===
+        # Egocentric object map: (3, 3, 11) - 3x3 view, 10 object state pairs + 1 (blocked)
+        self.ego_map_cnn = nn.Sequential(
+            nn.Conv2d(11, 32, kernel_size=2),
             nn.BatchNorm2d(32),
             nn.ReLU(),
             nn.Flatten(),
+            nn.Linear(32 * 4, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
         )
 
-        # Determine CNN output size using a dummy input
-        with torch.no_grad():
-            dummy_input = torch.zeros(1, *observation_shape).permute(0, 3, 1, 2)
-            cnn_out_size = self.cnn(dummy_input).shape[1]
+        # === Memory Processing ===
+        # Location-based semantic map: (W, H, 12)
+        # 11 object state pairs: 4 objects + 3 bins * 2 states + 1 blocked + 1 seen
+        self.global_map_cnn = nn.Sequential(
+            nn.Conv2d(12, 16, kernel_size=5, stride=2),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),
+            nn.Flatten(),
+            nn.Linear(32, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+        )
 
-        # Task branch - simplified for efficiency
-        self.task_net = nn.Sequential(
-            nn.Linear(task_dim, 128),
+        # Object map: (10 x 3) - 10 object state pairs with (x, y, present)
+        self.object_map_proj = nn.Sequential(
+            nn.Linear(10 * 3, 64),
+            nn.LayerNorm(64),
+            nn.ReLU(),
+            nn.Linear(64, 32),
+        )
+
+        # Past visited: (10 x 2) - Last 10 visited cell locations
+        self.visited_proj = nn.Sequential(
+            nn.Linear(10 * 2, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+        )
+
+        # Past actions: (5 x 11) - Last 5 actions + 1 if invalid
+        self.past_action_proj = nn.Sequential(
+            nn.Linear(5 * 11, 32),
+            nn.LayerNorm(32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+        )
+
+        # === Final Fusion Network ===
+        # Combine all features with attention
+        total_input_dim = 32 + 128 + 64 + 64 + 32 + 16 + 16  # sum of all branches
+        self.attention = nn.MultiheadAttention(embed_dim=total_input_dim, num_heads=8)
+
+        self.final_fusion = nn.Sequential(
+            nn.Linear(total_input_dim, 256),
+            nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(0.1),
-        )
-
-        # Non-task branch - simplified for efficiency
-        self.non_task_net = nn.Sequential(
-            nn.Linear(non_task_dim, 128),
+            nn.Linear(256, 128),
+            nn.LayerNorm(128),
             nn.ReLU(),
-            nn.Dropout(0.1),
         )
 
-        # Fusion network - simplified
-        fused_input_size = cnn_out_size + 128 + 128
-        self.fc = nn.Sequential(
-            nn.Linear(fused_input_size, 128), nn.ReLU(), nn.Linear(128, num_actions)
+        # Policy head for action selection
+        self.policy_head = nn.Sequential(
+            nn.Linear(128, num_actions),
+            nn.LayerNorm(num_actions),
         )
 
-    def forward(self, observation, context):
+    def forward(
+        self,
+        agent_state,
+        context,
+        ego_map,
+        global_map,
+        object_map,
+        visited,
+        past_actions,
+    ):
         """
+        Forward pass through the DQN network.
+
         Args:
-            observation (Tensor): Image tensor of shape (batch, C, H, W).
-            context (Tensor): Pre-concatenated context vector of shape (batch, 1204),
-            where the first 300 dims are for the task and the rest 904
-            dims are for direction, carrying, front object, and hint.
+            agent_state: Tensor of shape (batch_size, 11) - position, direction, inventory
+            context: Tensor of shape (batch_size, 769) - task + hint embeddings
+            ego_map: Tensor of shape (batch_size, 11, 3, 3) - egocentric view
+            global_map: Tensor of shape (batch_size, 12, H, W) - full semantic map
+            object_map: Tensor of shape (batch_size, 30) - flattened object states
+            visited: Tensor of shape (batch_size, 20) - past visited locations
+            past_actions: Tensor of shape (batch_size, 55) - action history
+
         Returns:
-            q_values (Tensor): Q-value predictions of shape (batch, num_actions)
+            action_logits: Tensor of shape (batch_size, num_actions)
         """
-        # Separate context into task and non-task parts.
-        task_embedding = context[:, :300]
-        non_task_context = context[:, 300:]
+        # Process each input stream
+        agent_feats = self.agent_state_proj(agent_state)
+        context_feats = self.context_proj(context)
+        ego_feats = self.ego_map_cnn(ego_map)
+        global_feats = self.global_map_cnn(global_map)
+        object_feats = self.object_map_proj(object_map)
+        visited_feats = self.visited_proj(visited)
+        action_feats = self.past_action_proj(past_actions)
 
-        # Process image observation.
-        obs_features = self.cnn(observation)
-        # Process task and non-task branches.
-        task_features = self.task_net(task_embedding)
-        non_task_features = self.non_task_net(non_task_context)
+        # Concatenate all features
+        combined_feats = torch.cat(
+            [
+                agent_feats,
+                context_feats,
+                ego_feats,
+                global_feats,
+                object_feats,
+                visited_feats,
+                action_feats,
+            ],
+            dim=-1,
+        )
 
-        # Fuse all features.
-        fused = torch.cat([obs_features, task_features, non_task_features], dim=1)
-        q_values = self.fc(fused)
-        return q_values
+        # Apply self-attention
+        attended_feats, _ = self.attention(
+            combined_feats.unsqueeze(0),
+            combined_feats.unsqueeze(0),
+            combined_feats.unsqueeze(0),
+        )
+        attended_feats = attended_feats.squeeze(0)
+
+        # Final fusion and policy
+        fused_feats = self.final_fusion(attended_feats)
+        action_logits = self.policy_head(fused_feats)
+
+        return action_logits
 
 
 class DQNAgent:
@@ -149,7 +225,7 @@ class DQNAgent:
 
         # Memory parameters
         self.replay_buffer = {}
-        self.max_replay_buffer_size = 250 # Reduced for computational efficiency
+        self.max_replay_buffer_size = 250  # Reduced for computational efficiency
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -157,32 +233,31 @@ class DQNAgent:
         self.per_beta = 0.4
         self.per_beta_increment = 0.001
         self.per_epsilon = 0.01
+        self.agent_view_size = 3
 
-        # Get observation shape from the environment (e.g. (384, 448, 3))
-        self.obs_shape = self.env.observation_space["image"].shape
-        self.obs_shape = (384, 448, 3)
-        # print("obs_shape", self.obs_shape)
-        # Number of actions from environment.
+        # Number of actions from environment
         self.output_dim = self.env.action_space.n
 
         # Initialize models and move them to the appropriate device
-        self.model = DQN(self.obs_shape, self.output_dim).to(self.device)
-        self.target_model = DQN(self.obs_shape, self.output_dim).to(self.device)
+        # Using task_embed_dim=384 for MiniLM and hint_embed_dim=385 for MiniLM+flag
+        self.model = DQN(self.output_dim, task_embed_dim=384, hint_embed_dim=385).to(
+            self.device
+        )
+        self.target_model = DQN(
+            self.output_dim, task_embed_dim=384, hint_embed_dim=385
+        ).to(self.device)
         self.update_target_network()
 
         # Optimizer with GPU support
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.alpha)
-        self.loss_fn = nn.MSELoss(
-            reduction="none"
-        )  # Changed to 'none' for prioritized replay
+        self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
-        # Initialize LLMHelper (assumed implemented in BLIP2Helper)
-        self.llm_helper = None # BLIP2Helper()
+        # Initialize LLMHelper
+        self.llm_helper = None
         self.hint_threshold = 0.95
 
-        # Checkpoint interval (save model every N episodes)
+        # Checkpoint interval
         self.checkpoint_interval = 250
-        # Directory to save checkpoints
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
@@ -199,26 +274,66 @@ class DQNAgent:
         # Save environment info for reproducibility
         self.env_info = {
             "env_name": env_name,
-            "obs_shape": self.obs_shape,
             "action_space": self.output_dim,
             "device": str(self.device),
         }
 
-        # Store potential components for visualization
-        self.potential_components = {
-            "pot_dist": 0,
-            "pot_orientation": 0,
-            "pot_carrying": 0,
-            "pot_expl": 0,
-            "pot_time": 0,
-            "weighted_dist": 0,
-            "weighted_orientation": 0,
-            "weighted_carrying": 0,
-            "weighted_expl": 0,
-            "weighted_time": 0,
-            "current_objective_idx": 0,
-            "objectives": [],
-        }
+        # Initialize state tracking
+        self.all_visited_cells = set()
+        self.visited_cells = deque(maxlen=10)  # Track last 10 visited cells
+        self.past_actions = deque(maxlen=5)  # Track last 5 actions
+        self.visited_rooms = set()
+
+        # For potential-based reward shaping
+        self.previous_potential = None
+        self.objectives = []
+        self.potential_components = {}
+
+    # Add this method to track visited cells
+    def update_visited_cells(self, pos):
+        """Track the last 10 visited cell positions"""
+        # Convert numpy values to Python native types if needed
+        if hasattr(pos[0], "item"):
+            pos = (pos[0].item(), pos[1].item())
+
+        self.visited_cells.append(pos)
+        self.all_visited_cells.add(pos)
+
+    # Add this method to track past actions
+    def update_past_actions(self, action):
+        """Track the last 5 actions"""
+        if action is not None:
+            self.past_actions.append(action)
+
+    def update_visited_rooms(self, room):
+        """Track the last 5 visited rooms"""
+        self.visited_rooms.add(room)
+
+    def update_state(self, obs, info, action=None):
+        """Update the state of the agent"""
+        self.state = self.encode_state(obs, info)
+        current_pos = info["symbolic_state"]["agent"]["pos"]
+        agent_room = info["symbolic_state"]["agent"]["room"].lower()
+        self.update_visited_cells(current_pos)
+        self.update_visited_rooms(agent_room)
+        if action is not None:
+            self.update_past_actions(action)
+
+    def reset_episode(self, obs, info):
+        """Reset episode-specific variables and parse task objectives"""
+        # Reset visited locations and past actions
+        self.all_visited_cells = set()
+        self.visited_cells = deque(maxlen=10)
+        self.past_actions = deque(maxlen=5)
+        self.update_state(obs, info)
+
+        # Reset other variables
+        self.visited_rooms = {info["symbolic_state"]["agent"]["room"].lower()}
+        self.current_step = 0
+        self.previous_potential = None
+
+        # Parse objectives if needed
+        self.objectives = self._find_matching_objects(info)
 
     def encode_str(self, text, encode_context=True):
         """
@@ -230,77 +345,273 @@ class DQNAgent:
         else:
             return text if text != "" else "none"
 
-    def preprocess_state(self, obs, info, hint=None, encode_context=True):
+    def object_to_channel(self, obj):
+        obj_name = obj["name"].lower()
+        channel_map = {
+            "bottle": 0,
+            "fruit": 1,
+            "papers": 2,
+            "plates": 3,
+            "trash bin": 4,
+            "recycling bin": 6,
+            "compost bin": 8,
+        }
+
+        channel = channel_map[obj_name]
+        # Add state offset for bins (open/closed)
+        if "bin" in obj_name and obj["state"].lower() == "closed":
+            channel += 1  # Use next channel for closed state
+        return channel
+
+    def encode_state(self, obs, info):
         """
-        Preprocess the state by concatenating the observation with context features.
-        The context is arranged as:
-        [task_embedding, direction_one_hot, carrying_embedding, front_obj_embedding, hint_embedding]
+        Converts the symbolic state from environment info into tensors for the DQN model.
+
+        Args:
+            info: Dict containing symbolic state information from environment
+
+        Returns:
+            Tuple of tensors needed for DQN forward pass
         """
-        if not hint:
-            hint = self.current_hint
 
-        # Get task and symbolic state information.
-        task_str = self.env.task  # ensure task is defined
-        direction_int = info["symbolic_state"]["agent"]["dir"]
-        carrying_str = info["symbolic_state"]["agent"]["carrying"] or ""
-        front_obj_str = info["symbolic_state"]["front_obj"] or ""
-        hint_str = hint
+        # Use the image observation for visual features if needed
+        image = (
+            torch.FloatTensor(obs["image"] / 255.0)
+            .permute(2, 0, 1)
+            .unsqueeze(0)
+            .to(self.device)
+        )
 
-        if encode_context:
-            # Create observation tensor and move to device
-            # visualize_image(obs["image"])
-            observation = (
-                torch.FloatTensor(obs["image"] / 255.0)
-                .permute(2, 0, 1)
-                .unsqueeze(0)
-                .to(self.device)
-            )
+        sym_state = info["symbolic_state"]
+        agent_info = sym_state["agent"]
+        objects = sym_state["objects"]
 
-            # Create embeddings and context vectors on the device
-            task_embed = self.encode_str(task_str, encode_context)  # (1, 300)
+        # === Agent State ===
+        # Position: (x, y) - normalized by grid size (12, 10)
+        pos_x, pos_y = agent_info["pos"]
+        pos_x_norm = float(pos_x) / 12.0  # Normalize x by grid width
+        pos_y_norm = float(pos_y) / 10.0  # Normalize y by grid height
 
-            direction_one_hot = torch.zeros(1, 4, device=self.device)
-            direction_one_hot[0, direction_int] = 1.0
+        # Direction: one-hot encode (0-3) and normalize by 4
+        dir_int = agent_info["dir"]
+        direction = torch.zeros(4)
+        direction[dir_int] = 1.0
 
-            carrying_embed = self.encode_str(carrying_str, encode_context)  # (1, 300)
-            front_obj_embed = self.encode_str(front_obj_str, encode_context)  # (1, 300)
-            hint_embed = self.encode_str(hint_str, encode_context)  # (1, 300)
-
-            # Concatenate with task embedding at the start
-            context = torch.cat(
-                [
-                    task_embed,
-                    direction_one_hot,
-                    carrying_embed,
-                    front_obj_embed,
-                    hint_embed,
-                ],
-                dim=1,
-            )
+        # Inventory: 5 dimensions (bottle, fruit, papers, plates, none)
+        inventory = torch.zeros(5)
+        carrying = agent_info["carrying"]
+        if carrying is None:
+            inventory[4] = 1.0  # None/empty slot
         else:
-            # For non-encoded context, return a JSON string (for visualization if needed)
-            observation = Image.fromarray(obs["image"])
-            context_dict = {
-                "task": task_str,
-                "direction": direction_int,
-                "carrying object": carrying_str,
-                "front object": front_obj_str,
-                "hint": hint_str,
-            }
-            context = json.dumps(context_dict)
+            # Map object name to index (0-3)
+            obj_map = {"bottle": 0, "fruit": 1, "papers": 2, "plates": 3}
+            obj_idx = obj_map.get(carrying, 4)  # Default to 4 if unknown
+            inventory[obj_idx] = 1.0
 
-        return observation, context
+        # Combine agent state
+        agent_state = (
+            torch.cat([torch.tensor([pos_x_norm, pos_y_norm]), direction, inventory])
+            .unsqueeze(0)
+            .to(self.device)
+        )
+
+        # === Context: Task + Hint ===
+        # We'll use the existing encode_str method for these
+        task_embed = self.encode_str(self.env.task)
+        hint_embed = self.encode_str(self.current_hint)
+        context = torch.cat([task_embed, hint_embed], dim=1).to(self.device)
+
+        # === Egocentric Object Map ===
+        # 3x3 view around agent with 11 channels
+        # (10 object types + 1 blocked)
+        ego_map = torch.zeros(11, self.agent_view_size, self.agent_view_size).to(
+            self.device
+        )
+
+        # Populate egocentric map by checking objects within 1 cell of agent
+        # Simple implementation for now, can be enhanced with actual observation data
+        for obj in objects:
+            obj_pos = obj["pos"]
+            obj_x, obj_y = obj_pos
+            # Check if object is within the 3x3 grid centered on agent
+            rel_x = obj_x - pos_x + self.agent_view_size // 2  # +1 to center
+            rel_y = obj_y - pos_y + self.agent_view_size // 2  # +1 to center
+
+            if 0 <= rel_x < self.agent_view_size and 0 <= rel_y < self.agent_view_size:
+                # Map object to channel
+                obj_channel = self.object_to_channel(obj)
+                ego_map[obj_channel, rel_y, rel_x] = 1.0
+
+        # Set blocked channel (last channel) - placeholder for walls/obstacles
+        # In a real implementation, this would be extracted from actual observation data
+        ego_map[10, :, :] = 0.0
+
+        # === Global Semantic Map ===
+        # Full map with 12 channels
+        # 11 object state pairs + 1 for seen cells
+        W, H = 12, 10  # Grid dimensions
+        global_map = torch.zeros(12, H, W).to(self.device)
+
+        # Populate global map with objects from symbolic state
+        for obj in objects:
+            x, y = obj["pos"]
+            channel = self.object_to_channel(obj)
+            global_map[channel, y - 1, x - 1] = 1.0
+
+        # Add "seen" cells to the last channel
+        for visited_pos in self.all_visited_cells:
+            x, y = visited_pos
+            for d_x in range(-self.agent_view_size // 2, self.agent_view_size // 2 + 1):
+                for d_y in range(
+                    -self.agent_view_size // 2, self.agent_view_size // 2 + 1
+                ):
+                    nx, ny = x + d_x, y + d_y
+                    if 0 < nx <= W and 0 < ny <= H:
+                        global_map[11, ny - 1, nx - 1] = 1.0
+
+        # === Object Map: 10 objects with (x, y, present) ===
+        object_map = torch.zeros(10 * 3).to(self.device)
+        object_map[2::3] = 1.0  # Start not present
+
+        for obj in objects:
+            channel = self.object_to_channel(obj)
+            x, y = obj["pos"]
+            # Normalize position
+            x_norm = float(x) / W
+            y_norm = float(y) / H
+
+            # Store (x, y, present)
+            idx = channel * 3
+            object_map[idx : idx + 3] = x_norm, y_norm, 0.0
+
+        object_map = object_map.unsqueeze(0)
+
+        # === Past Visited Locations ===
+        visited = -torch.ones(10 * 2).to(self.device)
+
+        for i in range(len(self.visited_cells)):
+            x, y = self.visited_cells[i]
+            x_norm = float(x) / W
+            y_norm = float(y) / H
+            visited[i * 2 : i * 2 + 2] = x_norm, y_norm
+
+        visited = visited.unsqueeze(0)
+
+        # === Past Actions ===
+        past_actions = torch.zeros(5 * 11).to(self.device)
+        past_actions[10::11] = 1.0  # Start invalid
+
+        for i in range(len(self.past_actions)):
+            past_actions[i * 11 + self.past_actions[i]] = 1.0
+            past_actions[i * 11 + 10] = 0.0
+
+        past_actions = past_actions.unsqueeze(0)
+
+        # Make sure shapes are correct for batched input (batch_size=1)
+        ego_map = ego_map.unsqueeze(0)
+        global_map = global_map.unsqueeze(0)
+
+        return (
+            image,
+            agent_state,
+            context,
+            ego_map,
+            global_map,
+            object_map,
+            visited,
+            past_actions,
+        )
+
+    def choose_action(self, state, obs, info, testing=False):
+        """
+        Choose an action using epsilon-greedy policy.
+        Modified to use the new state format.
+        """
+        (
+            image,
+            agent_state,
+            context,
+            ego_map,
+            global_map,
+            object_map,
+            visited,
+            past_actions,
+        ) = state
+
+        uncertainty = self.uncertainty_score(state)
+        cost = 0
+
+        # Check if we should use LLM hints
+        if (
+            uncertainty > self.hint_threshold
+            and self.num_llm_calls < self.max_llm_calls
+            and not testing
+        ):
+            cost = self.llm_cost * (2**self.num_llm_calls)
+            # Generate hint using LLM
+            if self.llm_helper is not None:
+                hint, _ = self.llm_helper.query_llm(obs["image"], info)
+                self.num_llm_calls += 1
+                print(f"Task: {self.env.task}\nHint: {hint}")
+                self.current_hint = hint
+                # Reprocess state with new hint
+                state = self.preprocess_state(obs, info)
+                (
+                    image,
+                    agent_state,
+                    context,
+                    ego_map,
+                    global_map,
+                    object_map,
+                    visited,
+                    past_actions,
+                ) = state
+
+        # Epsilon-greedy action selection
+        if not testing and random.random() < self.epsilon:
+            return self.env.action_space.sample(), cost, state
+
+        # Greedy action selection
+        with torch.no_grad():
+            q_values = self.model(
+                agent_state,
+                context,
+                ego_map,
+                global_map,
+                object_map,
+                visited,
+                past_actions,
+            )
+            action = torch.argmax(q_values, dim=1).item()
+
+        return action, cost, state
 
     def uncertainty_score(self, state):
         """
         Compute uncertainty based on the entropy of the softmax over Q-values.
-        Assumes 'state' is a tuple (observation, context).
-        Uses GPU for computation then transfers back to CPU for numpy operations.
+        Modified to use the new state format.
         """
-        observation, context = state
+        (
+            image,
+            agent_state,
+            context,
+            ego_map,
+            global_map,
+            object_map,
+            visited,
+            past_actions,
+        ) = state
+
         with torch.no_grad():
-            q_values = self.model(observation, context)
-            # Move to CPU for numpy operations
+            q_values = self.model(
+                agent_state,
+                context,
+                ego_map,
+                global_map,
+                object_map,
+                visited,
+                past_actions,
+            )
             q_values = q_values.squeeze(0).cpu().numpy()
 
         # Compute entropy (on CPU with numpy)
@@ -310,14 +621,6 @@ class DQNAgent:
         max_entropy = np.log(len(q_values))
 
         return entropy / max_entropy
-
-    def reset_episode(self, info):
-        """Reset episode-specific variables and parse task objectives"""
-        # Reset variables
-        self.visited_rooms = {info["symbolic_state"]["agent"]["room"].lower()}
-        self.visited_cells = {tuple(info["symbolic_state"]["agent"]["pos"])}
-        self.current_step = 0
-        self.previous_potential = None
 
     def _find_matching_objects(self, info):
         """
@@ -348,11 +651,6 @@ class DQNAgent:
         agent_room = info["symbolic_state"]["agent"]["room"].lower()
         agent_dir = info["symbolic_state"]["agent"]["dir"]
         carrying = info["symbolic_state"]["agent"]["carrying"]
-        self.objectives = self._find_matching_objects(info)
-
-        # Update visited rooms
-        self.visited_rooms.add(agent_room)
-        self.visited_cells.add(tuple(agent_pos))
 
         # Start with base potential
         potential = 0
@@ -464,51 +762,6 @@ class DQNAgent:
         # Return shaped reward and original reward
         return base_reward + shaping, base_reward
 
-    def choose_action(self, state, obs, info, testing=False):
-        """
-        Choose an action using an epsilon-greedy strategy.
-        If uncertainty is high and LLM calls are allowed, query the LLM.
-        Uses GPU for tensor operations.
-
-        Args:
-            state: Preprocessed state tuple (observation, context)
-            obs: Raw observation from environment
-            info: Info dict from environment
-            testing: If True, disable exploration and always choose greedy action
-        """
-        # print(obs["image"].shape)
-        uncertainty = self.uncertainty_score(state)
-        cost = 0
-
-        # Check if we should use LLM hints
-        if (
-            uncertainty > self.hint_threshold
-            and self.num_llm_calls < self.max_llm_calls
-        ):
-            cost = self.llm_cost * (2**self.num_llm_calls)
-            observation, context = self.preprocess_state(
-                obs, info, encode_context=False
-            )
-            hint, hint_uncertainty = self.llm_helper.query_llm(observation, context)
-            self.num_llm_calls += 1
-            print(
-                f"Task: {self.env.task}\nHint: {hint}\nUncertainty: {hint_uncertainty:.2f}"
-            )
-            self.current_hint = hint
-            state = self.preprocess_state(obs, info)
-
-        # Epsilon-greedy action selection (skip if testing)
-        if not testing and random.random() < self.epsilon:
-            return self.env.action_space.sample(), cost, state
-
-        # Greedy action selection using GPU
-        with torch.no_grad():
-            q_values = self.model(state[0], state[1])
-            # Use tensor operations on GPU, only get final action as a CPU item
-            action = torch.argmax(q_values, dim=1).item()
-
-        return action, cost, state
-
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
@@ -610,14 +863,33 @@ class DQNAgent:
         if batch is None:
             return None
 
+        # Unpack the batch
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        # Move all tensors to the device (GPU)
-        observation_batch = torch.cat([s[0] for s in states], dim=0)
-        context_batch = torch.cat([s[1] for s in states], dim=0)
-        next_observation_batch = torch.cat([s[0] for s in next_states], dim=0)
-        next_context_batch = torch.cat([s[1] for s in next_states], dim=0)
+        # Extract and concatenate all state components
+        # Each state is (image, agent_state, context, ego_map, global_map, object_map, visited, past_actions)
 
+        # Prepare batched tensors for current states
+        image_batch = torch.cat([s[0] for s in states], dim=0)
+        agent_state_batch = torch.cat([s[1] for s in states], dim=0)
+        context_batch = torch.cat([s[2] for s in states], dim=0)
+        ego_map_batch = torch.cat([s[3] for s in states], dim=0)
+        global_map_batch = torch.cat([s[4] for s in states], dim=0)
+        object_map_batch = torch.cat([s[5] for s in states], dim=0)
+        visited_batch = torch.cat([s[6] for s in states], dim=0)
+        past_actions_batch = torch.cat([s[7] for s in states], dim=0)
+
+        # Prepare batched tensors for next states
+        next_image_batch = torch.cat([s[0] for s in next_states], dim=0)
+        next_agent_state_batch = torch.cat([s[1] for s in next_states], dim=0)
+        next_context_batch = torch.cat([s[2] for s in next_states], dim=0)
+        next_ego_map_batch = torch.cat([s[3] for s in next_states], dim=0)
+        next_global_map_batch = torch.cat([s[4] for s in next_states], dim=0)
+        next_object_map_batch = torch.cat([s[5] for s in next_states], dim=0)
+        next_visited_batch = torch.cat([s[6] for s in next_states], dim=0)
+        next_past_actions_batch = torch.cat([s[7] for s in next_states], dim=0)
+
+        # Prepare other tensors
         actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
         rewards = torch.FloatTensor(rewards).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
@@ -626,14 +898,30 @@ class DQNAgent:
         if weights is not None:
             weights = torch.FloatTensor(weights).to(self.device)
 
+        # Compute target Q-values
         with torch.no_grad():
             next_q_values = self.target_model(
-                next_observation_batch, next_context_batch
+                next_agent_state_batch,
+                next_context_batch,
+                next_ego_map_batch,
+                next_global_map_batch,
+                next_object_map_batch,
+                next_visited_batch,
+                next_past_actions_batch,
             )
             max_next_q_values, _ = torch.max(next_q_values, dim=1)
             target_q_values = rewards + self.gamma * (1 - dones) * max_next_q_values
 
-        current_q_values = self.model(observation_batch, context_batch)
+        # Compute current Q-values
+        current_q_values = self.model(
+            agent_state_batch,
+            context_batch,
+            ego_map_batch,
+            global_map_batch,
+            object_map_batch,
+            visited_batch,
+            past_actions_batch,
+        )
         current_q_values = current_q_values.gather(1, actions).squeeze(1)
 
         # Calculate TD errors (used for updating priorities)
@@ -689,12 +977,11 @@ class DQNAgent:
             obs, info = self.env.reset()
 
             # Reset episode-specific variables and parse objectives
-            self.reset_episode(info)
+            self.reset_episode(obs, info)
 
             self.num_llm_calls = 0
             self.current_hint = ""
 
-            state = self.preprocess_state(obs, info)
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
             task_id = self.env.task
@@ -718,7 +1005,9 @@ class DQNAgent:
             for step in range(self.env.max_steps):
                 self.current_step += 1
                 action, cost, state = self.choose_action(state, obs, info)
+                prev_state = self.state
                 obs, reward, terminated, truncated, info = self.env.step(action)
+                self.update_state(obs, info, action)
 
                 self.total_steps += 1
 
@@ -733,13 +1022,10 @@ class DQNAgent:
                 shaped_reward -= cost
                 original_reward -= cost
 
-                next_state = self.preprocess_state(obs, info)
-
                 # Create transition and add to replay buffer with maximum priority initially
-                transition = [state, action, shaped_reward, next_state, terminated]
+                transition = [prev_state, action, shaped_reward, self.state, terminated]
                 self.add_experience(task_id, transition)
 
-                state = next_state
                 total_reward += shaped_reward
                 original_reward_sum += original_reward
 
@@ -938,7 +1224,7 @@ class DQNAgent:
             obs, info = self.env.reset()
 
             # Reset episode-specific variables and parse objectives
-            self.reset_episode(info)
+            self.reset_episode(obs, info)
 
             self.num_llm_calls = 0
             self.current_hint = ""
@@ -951,12 +1237,14 @@ class DQNAgent:
 
             total_reward = 0  # Original reward
             total_shaped_reward = 0  # Shaped reward
-            state = self.preprocess_state(obs, info)
 
             for step in range(self.env.max_steps):
                 self.current_step += 1
                 action, cost, state = self.choose_action(state, obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
+                self.update_state(obs, info, action)
+
+                self.total_steps += 1
 
                 # Track success without using shaped rewards
                 if reward > 0:
