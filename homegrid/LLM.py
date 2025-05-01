@@ -31,6 +31,9 @@ class LLMAgent:
         self.testing_dir = os.path.join(self.checkpoint_dir, "testing")
         os.makedirs(self.testing_dir, exist_ok=True)
 
+        # Initialize state
+        self.state = None
+
         if model_name == "blip-2":
             self.llm = BLIP2Helper()
         else:
@@ -62,20 +65,26 @@ class LLMAgent:
 
         return description.strip()
 
-    def preprocess_state(self, obs, info):
+    def encode_state(self, obs, info):
+        """Convert observations and info into format for LLM query"""
         observation = Image.fromarray(obs["image"])
         # observation.show()
         context = self.format_symbolic_state(info["symbolic_state"])
 
         return observation, context
 
-    def reset_episode(self, info):
+    def update_state(self, obs, info):
+        """Update the state of the agent"""
+        self.state = self.encode_state(obs, info)
+
+    def reset_episode(self, obs, info):
         """Reset episode-specific variables and parse task objectives"""
         # Reset variables
-        self.visited_rooms = {info["symbolic_state"]["agent"]["room"].lower()}
+        self.visited_rooms = {info["symbolic_state"]["agent"]["room"]}
         self.visited_cells = {tuple(info["symbolic_state"]["agent"]["pos"])}
         self.current_step = 0
         self.previous_potential = None
+        self.update_state(obs, info)
 
     def _find_matching_objects(self, info):
         """
@@ -83,11 +92,11 @@ class LLMAgent:
         and sort them by their position in the text
         """
         matches = []
-        text = self.env.task.lower()
+        text = self.env.task
 
         # Check all objects and rooms
         for obj in info["symbolic_state"]["objects"] + self.env.rooms:
-            obj_name = obj["name"].lower()
+            obj_name = obj["name"]
             if obj_name in text:
                 # Find position in the text
                 idx = text.find(obj_name)
@@ -103,7 +112,7 @@ class LLMAgent:
         """Compute a potential function for reward shaping based on objectives"""
         # Get agent's current state
         agent_pos = info["symbolic_state"]["agent"]["pos"]
-        agent_room = info["symbolic_state"]["agent"]["room"].lower()
+        agent_room = info["symbolic_state"]["agent"]["room"]
         agent_dir = info["symbolic_state"]["agent"]["dir"]
         carrying = info["symbolic_state"]["agent"]["carrying"]
         self.objectives = self._find_matching_objects(info)
@@ -121,7 +130,7 @@ class LLMAgent:
         # Check if carrying first objective (in a multi-objective task)
         carrying_first_obj = (
             carrying is not None
-            and carrying.lower() == self.objectives[0]["name"].lower()
+            and carrying == self.objectives[0]["name"]
             and len(self.objectives) > 1
         )
 
@@ -222,12 +231,12 @@ class LLMAgent:
         # Return shaped reward and original reward
         return base_reward + shaping, base_reward
 
-    def choose_action(self, state, obs, info, testing=True):
+    def choose_action(self, obs, info, testing=True):
+        """Get action from LLM using current state"""
         cost = 0.0
-        state = self.preprocess_state(obs, info)
-        action, confidence = self.llm.query_action(state, self.env.task)
 
-        return action, cost, state
+        action, confidence = self.llm.query_action(self.state, self.env.task)
+        return action, cost
 
     def test(self, episodes=None, render=False):
         if episodes is None:
@@ -242,7 +251,7 @@ class LLMAgent:
             obs, info = self.env.reset()
 
             # Reset episode-specific variables and parse objectives
-            self.reset_episode(info)
+            self.reset_episode(obs, info)
 
             # Track current task
             current_task = self.env.task
@@ -252,12 +261,12 @@ class LLMAgent:
 
             total_reward = 0  # Original reward
             total_shaped_reward = 0  # Shaped reward
-            state = self.preprocess_state(obs, info)
 
             for step in range(self.env.max_steps):
                 self.current_step += 1
-                action, cost, state = self.choose_action(state, obs, info)
+                action, cost = self.choose_action(obs, info)
                 obs, reward, terminated, truncated, info = self.env.step(action)
+                self.update_state(obs, info)
 
                 # Track success without using shaped rewards
                 if reward > 0:

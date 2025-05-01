@@ -8,23 +8,30 @@ import torch.optim as optim
 from homegrid.BLIP import BLIP2Helper
 from pprint import pprint
 import matplotlib.pyplot as plt
-import spacy
 import os
 import json
 from PIL import Image
 from datetime import datetime
 import time
+from sentence_transformers import SentenceTransformer
 
-# Load FastText word embeddings from spaCy (300-dimensional)
-nlp = spacy.load("en_core_web_md")
-EMBED_DIM = nlp("hello").vector.shape[0]  # 300
+# Load sentence transformer model
+sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
+HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
 
-def get_fasttext_embedding(text):
+def get_sentence_embedding(text):
     """
-    Convert a text (word or phrase) to a 300-dimensional FastText embedding.
+    Convert a text (word or phrase) to a sentence embedding using all-MiniLM-L6-v2.
     """
-    return torch.tensor(nlp(text).vector, dtype=torch.float32)
+    # Handle empty text
+    if not text or text == "none" or text == "":
+        # Return zeros for empty text
+        return torch.zeros(TASK_EMBED_DIM, dtype=torch.float32)
+
+    # Get embedding and convert to tensor
+    return sentence_model.encode(text, convert_to_tensor=True)
 
 
 def visualize_image(image):
@@ -34,11 +41,13 @@ def visualize_image(image):
 
 
 class DQN(nn.Module):
-    def __init__(self, num_actions, task_embed_dim=384, hint_embed_dim=385):
+    def __init__(
+        self, num_actions, task_embed_dim=TASK_EMBED_DIM, hint_embed_dim=HINT_EMBED_DIM
+    ):
         super().__init__()
 
         # === Agent State Processing ===
-        # Position: (x, y) normalized by (12, 10)
+        # Position: (x, y) normalized by (width, height)
         # Direction: One-hot encoded (4 dims) normalized by 4
         # Inventory: 5 dims (one hot + none)
         self.agent_state_proj = nn.Sequential(
@@ -59,7 +68,7 @@ class DQN(nn.Module):
         )
 
         # === Observation Processing ===
-        # Egocentric object map: (3, 3, 11) - 3x3 view, 10 object state pairs + 1 (blocked)
+        # Egocentric object map: (11, agent_view_size, agent_view_size) - egocentric view, 10 object state pairs + 1 (blocked)
         self.ego_map_cnn = nn.Sequential(
             nn.Conv2d(11, 32, kernel_size=2),
             nn.BatchNorm2d(32),
@@ -71,7 +80,7 @@ class DQN(nn.Module):
         )
 
         # === Memory Processing ===
-        # Location-based semantic map: (W, H, 12)
+        # Location-based semantic map: (12, H, W)
         # 11 object state pairs: 4 objects + 3 bins * 2 states + 1 blocked + 1 seen
         self.global_map_cnn = nn.Sequential(
             nn.Conv2d(12, 16, kernel_size=5, stride=2),
@@ -147,8 +156,8 @@ class DQN(nn.Module):
 
         Args:
             agent_state: Tensor of shape (batch_size, 11) - position, direction, inventory
-            context: Tensor of shape (batch_size, 769) - task + hint embeddings
-            ego_map: Tensor of shape (batch_size, 11, 3, 3) - egocentric view
+            context: Tensor of shape (batch_size, 769) - task (384) + hint (385) embeddings
+            ego_map: Tensor of shape (batch_size, 11, agent_view_size, agent_view_size) - egocentric view
             global_map: Tensor of shape (batch_size, 12, H, W) - full semantic map
             object_map: Tensor of shape (batch_size, 30) - flattened object states
             visited: Tensor of shape (batch_size, 20) - past visited locations
@@ -201,7 +210,6 @@ class DQNAgent:
         # Check if CUDA is available and set the device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
-
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
         self.alpha = 0.0005  # Lower learning rate for more stable learning
@@ -215,6 +223,11 @@ class DQNAgent:
         self.num_llm_calls = 0
         self.max_llm_calls = 0  # Disable LLM queries for pure DQN training
         self.current_hint = ""
+        self.agent_view_size = 3
+
+        # Get grid dimensions from environment
+        self.width = 12  # bit less than env.width
+        self.height = 10  # bit less than env.height
 
         # Track episode number from previous training
         self.previous_episode = 0
@@ -233,18 +246,21 @@ class DQNAgent:
         self.per_beta = 0.4
         self.per_beta_increment = 0.001
         self.per_epsilon = 0.01
-        self.agent_view_size = 3
 
         # Number of actions from environment
         self.output_dim = self.env.action_space.n
 
         # Initialize models and move them to the appropriate device
-        # Using task_embed_dim=384 for MiniLM and hint_embed_dim=385 for MiniLM+flag
-        self.model = DQN(self.output_dim, task_embed_dim=384, hint_embed_dim=385).to(
-            self.device
-        )
+        # Using TASK_EMBED_DIM and HINT_EMBED_DIM for the transformer model
+        self.model = DQN(
+            self.output_dim,
+            task_embed_dim=TASK_EMBED_DIM,
+            hint_embed_dim=HINT_EMBED_DIM,
+        ).to(self.device)
         self.target_model = DQN(
-            self.output_dim, task_embed_dim=384, hint_embed_dim=385
+            self.output_dim,
+            task_embed_dim=TASK_EMBED_DIM,
+            hint_embed_dim=HINT_EMBED_DIM,
         ).to(self.device)
         self.update_target_network()
 
@@ -311,42 +327,52 @@ class DQNAgent:
 
     def update_state(self, obs, info, action=None):
         """Update the state of the agent"""
-        self.state = self.encode_state(obs, info)
         current_pos = info["symbolic_state"]["agent"]["pos"]
-        agent_room = info["symbolic_state"]["agent"]["room"].lower()
+        agent_room = info["symbolic_state"]["agent"]["room"]
         self.update_visited_cells(current_pos)
         self.update_visited_rooms(agent_room)
         if action is not None:
             self.update_past_actions(action)
+        self.state = self.encode_state(obs, info)
 
     def reset_episode(self, obs, info):
         """Reset episode-specific variables and parse task objectives"""
         # Reset visited locations and past actions
         self.all_visited_cells = set()
+        self.visited_rooms = set()
         self.visited_cells = deque(maxlen=10)
         self.past_actions = deque(maxlen=5)
         self.update_state(obs, info)
 
         # Reset other variables
-        self.visited_rooms = {info["symbolic_state"]["agent"]["room"].lower()}
         self.current_step = 0
         self.previous_potential = None
 
         # Parse objectives if needed
         self.objectives = self._find_matching_objects(info)
 
-    def encode_str(self, text, encode_context=True):
+    def encode_str(self, text, is_hint=False):
         """
-        Convert a string to a 300-dimensional FastText embedding and move to device.
+        Convert a string to a sentence embedding using all-MiniLM-L6-v2 and move to device.
+        For hints, adds an additional flag dimension.
         """
-        if encode_context:
-            # Get embedding and move to GPU if available
-            return get_fasttext_embedding(text).unsqueeze(0).to(self.device)
-        else:
-            return text if text != "" else "none"
+        # Get the base embedding
+        embedding = get_sentence_embedding(text)
+
+        # For hints, add an extra dimension for the flag
+        if is_hint:
+            # Add a flag indicating if there's a hint (1.0) or not (0.0)
+            flag = torch.tensor([1.0 if text else 0.0], dtype=torch.float32)
+            embedding = torch.cat([embedding, flag])
+
+        # Add batch dimension and move to device
+        return embedding.unsqueeze(0).to(self.device)
 
     def object_to_channel(self, obj):
-        obj_name = obj["name"].lower()
+        if isinstance(obj, str):  # Handle string inputs (for inventory objects)
+            obj_name = obj
+        else:
+            obj_name = obj["name"]
         channel_map = {
             "bottle": 0,
             "fruit": 1,
@@ -359,7 +385,7 @@ class DQNAgent:
 
         channel = channel_map[obj_name]
         # Add state offset for bins (open/closed)
-        if "bin" in obj_name and obj["state"].lower() == "closed":
+        if "bin" in obj_name and obj["state"] == "closed":
             channel += 1  # Use next channel for closed state
         return channel
 
@@ -374,23 +400,18 @@ class DQNAgent:
             Tuple of tensors needed for DQN forward pass
         """
 
-        # Use the image observation for visual features if needed
-        image = (
-            torch.FloatTensor(obs["image"] / 255.0)
-            .permute(2, 0, 1)
-            .unsqueeze(0)
-            .to(self.device)
-        )
+        def normalize_position(x, y):
+            """Normalize position coordinates by grid dimensions"""
+            return float(x) / self.width, float(y) / self.height
 
         sym_state = info["symbolic_state"]
         agent_info = sym_state["agent"]
         objects = sym_state["objects"]
 
         # === Agent State ===
-        # Position: (x, y) - normalized by grid size (12, 10)
+        # Position: (x, y) - normalized by grid size (width, height)
         pos_x, pos_y = agent_info["pos"]
-        pos_x_norm = float(pos_x) / 12.0  # Normalize x by grid width
-        pos_y_norm = float(pos_y) / 10.0  # Normalize y by grid height
+        pos_x_norm, pos_y_norm = normalize_position(pos_x, pos_y)
 
         # Direction: one-hot encode (0-3) and normalize by 4
         dir_int = agent_info["dir"]
@@ -404,8 +425,8 @@ class DQNAgent:
             inventory[4] = 1.0  # None/empty slot
         else:
             # Map object name to index (0-3)
-            obj_map = {"bottle": 0, "fruit": 1, "papers": 2, "plates": 3}
-            obj_idx = obj_map.get(carrying, 4)  # Default to 4 if unknown
+            obj_idx = self.object_to_channel(carrying)
+            assert obj_idx < 4, f"Invalid object index: {obj_idx}"
             inventory[obj_idx] = 1.0
 
         # Combine agent state
@@ -418,11 +439,11 @@ class DQNAgent:
         # === Context: Task + Hint ===
         # We'll use the existing encode_str method for these
         task_embed = self.encode_str(self.env.task)
-        hint_embed = self.encode_str(self.current_hint)
+        hint_embed = self.encode_str(self.current_hint, is_hint=True)
         context = torch.cat([task_embed, hint_embed], dim=1).to(self.device)
 
         # === Egocentric Object Map ===
-        # 3x3 view around agent with 11 channels
+        # partial view around agent with 11 channels
         # (10 object types + 1 blocked)
         ego_map = torch.zeros(11, self.agent_view_size, self.agent_view_size).to(
             self.device
@@ -434,8 +455,8 @@ class DQNAgent:
             obj_pos = obj["pos"]
             obj_x, obj_y = obj_pos
             # Check if object is within the 3x3 grid centered on agent
-            rel_x = obj_x - pos_x + self.agent_view_size // 2  # +1 to center
-            rel_y = obj_y - pos_y + self.agent_view_size // 2  # +1 to center
+            rel_x = obj_x - pos_x + self.agent_view_size // 2  # + to center
+            rel_y = obj_y - pos_y + self.agent_view_size // 2  # + to center
 
             if 0 <= rel_x < self.agent_view_size and 0 <= rel_y < self.agent_view_size:
                 # Map object to channel
@@ -446,11 +467,12 @@ class DQNAgent:
         # In a real implementation, this would be extracted from actual observation data
         ego_map[10, :, :] = 0.0
 
+        ego_map = ego_map.unsqueeze(0)
+
         # === Global Semantic Map ===
         # Full map with 12 channels
         # 11 object state pairs + 1 for seen cells
-        W, H = 12, 10  # Grid dimensions
-        global_map = torch.zeros(12, H, W).to(self.device)
+        global_map = torch.zeros(12, self.height, self.width).to(self.device)
 
         # Populate global map with objects from symbolic state
         for obj in objects:
@@ -466,23 +488,23 @@ class DQNAgent:
                     -self.agent_view_size // 2, self.agent_view_size // 2 + 1
                 ):
                     nx, ny = x + d_x, y + d_y
-                    if 0 < nx <= W and 0 < ny <= H:
+                    if 0 < nx <= self.width and 0 < ny <= self.height:
                         global_map[11, ny - 1, nx - 1] = 1.0
+
+        global_map = global_map.unsqueeze(0)
 
         # === Object Map: 10 objects with (x, y, present) ===
         object_map = torch.zeros(10 * 3).to(self.device)
-        object_map[2::3] = 1.0  # Start not present
 
         for obj in objects:
             channel = self.object_to_channel(obj)
             x, y = obj["pos"]
             # Normalize position
-            x_norm = float(x) / W
-            y_norm = float(y) / H
+            x_norm, y_norm = normalize_position(x, y)
 
             # Store (x, y, present)
             idx = channel * 3
-            object_map[idx : idx + 3] = x_norm, y_norm, 0.0
+            object_map[idx : idx + 3] = x_norm, y_norm, 1.0
 
         object_map = object_map.unsqueeze(0)
 
@@ -491,8 +513,7 @@ class DQNAgent:
 
         for i in range(len(self.visited_cells)):
             x, y = self.visited_cells[i]
-            x_norm = float(x) / W
-            y_norm = float(y) / H
+            x_norm, y_norm = normalize_position(x, y)
             visited[i * 2 : i * 2 + 2] = x_norm, y_norm
 
         visited = visited.unsqueeze(0)
@@ -507,12 +528,7 @@ class DQNAgent:
 
         past_actions = past_actions.unsqueeze(0)
 
-        # Make sure shapes are correct for batched input (batch_size=1)
-        ego_map = ego_map.unsqueeze(0)
-        global_map = global_map.unsqueeze(0)
-
         return (
-            image,
             agent_state,
             context,
             ego_map,
@@ -522,23 +538,12 @@ class DQNAgent:
             past_actions,
         )
 
-    def choose_action(self, state, obs, info, testing=False):
+    def choose_action(self, obs, info, testing=False):
         """
         Choose an action using epsilon-greedy policy.
-        Modified to use the new state format.
         """
-        (
-            image,
-            agent_state,
-            context,
-            ego_map,
-            global_map,
-            object_map,
-            visited,
-            past_actions,
-        ) = state
 
-        uncertainty = self.uncertainty_score(state)
+        uncertainty = self.uncertainty_score()
         cost = 0
 
         # Check if we should use LLM hints
@@ -555,64 +560,26 @@ class DQNAgent:
                 print(f"Task: {self.env.task}\nHint: {hint}")
                 self.current_hint = hint
                 # Reprocess state with new hint
-                state = self.preprocess_state(obs, info)
-                (
-                    image,
-                    agent_state,
-                    context,
-                    ego_map,
-                    global_map,
-                    object_map,
-                    visited,
-                    past_actions,
-                ) = state
+                self.update_state(obs, info)
 
         # Epsilon-greedy action selection
         if not testing and random.random() < self.epsilon:
-            return self.env.action_space.sample(), cost, state
+            return self.env.action_space.sample(), cost
 
         # Greedy action selection
         with torch.no_grad():
-            q_values = self.model(
-                agent_state,
-                context,
-                ego_map,
-                global_map,
-                object_map,
-                visited,
-                past_actions,
-            )
+            q_values = self.model(*self.state)
             action = torch.argmax(q_values, dim=1).item()
 
-        return action, cost, state
+        return action, cost
 
-    def uncertainty_score(self, state):
+    def uncertainty_score(self):
         """
         Compute uncertainty based on the entropy of the softmax over Q-values.
-        Modified to use the new state format.
+        Modified to use self.state.
         """
-        (
-            image,
-            agent_state,
-            context,
-            ego_map,
-            global_map,
-            object_map,
-            visited,
-            past_actions,
-        ) = state
-
         with torch.no_grad():
-            q_values = self.model(
-                agent_state,
-                context,
-                ego_map,
-                global_map,
-                object_map,
-                visited,
-                past_actions,
-            )
-            q_values = q_values.squeeze(0).cpu().numpy()
+            q_values = self.model(*self.state).squeeze(0).cpu().numpy()
 
         # Compute entropy (on CPU with numpy)
         q_values = q_values - np.max(q_values)  # for numerical stability
@@ -628,11 +595,11 @@ class DQNAgent:
         and sort them by their position in the text
         """
         matches = []
-        text = self.env.task.lower()
+        text = self.env.task
 
         # Check all objects and rooms
         for obj in info["symbolic_state"]["objects"] + self.env.rooms:
-            obj_name = obj["name"].lower()
+            obj_name = obj["name"]
             if obj_name in text:
                 # Find position in the text
                 idx = text.find(obj_name)
@@ -648,7 +615,6 @@ class DQNAgent:
         """Compute a potential function for reward shaping based on objectives"""
         # Get agent's current state
         agent_pos = info["symbolic_state"]["agent"]["pos"]
-        agent_room = info["symbolic_state"]["agent"]["room"].lower()
         agent_dir = info["symbolic_state"]["agent"]["dir"]
         carrying = info["symbolic_state"]["agent"]["carrying"]
 
@@ -661,7 +627,7 @@ class DQNAgent:
         # Check if carrying first objective (in a multi-objective task)
         carrying_first_obj = (
             carrying is not None
-            and carrying.lower() == self.objectives[0]["name"].lower()
+            and carrying == self.objectives[0]["name"]
             and len(self.objectives) > 1
         )
 
@@ -700,7 +666,7 @@ class DQNAgent:
                 pot_carrying = 1
 
         # pot_rooms = len(self.visited_rooms)
-        pot_expl = len(self.visited_cells)
+        pot_expl = len(self.all_visited_cells)
         pot_time = self.current_step
 
         # Calculate weighted components
@@ -1004,7 +970,7 @@ class DQNAgent:
 
             for step in range(self.env.max_steps):
                 self.current_step += 1
-                action, cost, state = self.choose_action(state, obs, info)
+                action, cost = self.choose_action(obs, info)
                 prev_state = self.state
                 obs, reward, terminated, truncated, info = self.env.step(action)
                 self.update_state(obs, info, action)
@@ -1240,7 +1206,7 @@ class DQNAgent:
 
             for step in range(self.env.max_steps):
                 self.current_step += 1
-                action, cost, state = self.choose_action(state, obs, info, testing=True)
+                action, cost = self.choose_action(obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
                 self.update_state(obs, info, action)
 
@@ -1353,3 +1319,17 @@ class DQNAgent:
         print(f"\nTest results saved to: {results_file}")
 
         return average_reward, average_shaped_reward
+
+
+if __name__ == "__main__":
+    # Initialize the Simulator
+    agent = DQNAgent(
+        env_name="homegrid-task",
+        episodes=5,  # Just 5 test episodes to start
+        checkpoint_dir="checkpoints15",  # or any directory you want
+    )
+
+    # Test it
+    agent.env.reset()
+    agent.env.step(0)
+    pprint(dir(agent.env))

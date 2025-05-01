@@ -67,12 +67,12 @@ def load_agent(
                 training_dir, f"model_checkpoint_{checkpoint_path}.pth"
             )
 
-        elif str(checkpoint_path).lower() == "best":
+        elif str(checkpoint_path) == "best":
             checkpoint_path = os.path.join(training_dir, "best_model.pth")
             # For "best" model, try to extract the episode number from the checkpoint
             # This will be set from the checkpoint data below
 
-        elif str(checkpoint_path).lower() == "final":
+        elif str(checkpoint_path) == "final":
             # Look for the most recent final model
             final_models = []
             final_models.extend(

@@ -236,7 +236,7 @@ def step(env, window, action, agent_view=False):
 
         # Update visited rooms and cells in the agent
         agent_pos = info["symbolic_state"]["agent"]["pos"]
-        agent_room = info["symbolic_state"]["agent"]["room"].lower()
+        agent_room = info["symbolic_state"]["agent"]["room"]
         agent.visited_rooms.add(agent_room)
         agent.visited_cells.add(tuple(agent_pos))
 

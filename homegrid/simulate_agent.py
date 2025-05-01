@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import torch
 from homegrid.window import Window
-from homegrid.DQN import DQNAgent, get_fasttext_embedding
+from homegrid.DQN import DQNAgent, get_sentence_embedding
 from tokenizers import Tokenizer
 from homegrid.LLM import LLMAgent
 import argparse
@@ -90,9 +90,9 @@ class AgentSimulator:
                 checkpoint_path = os.path.join(
                     training_dir, f"model_checkpoint_{model_path}.pth"
                 )
-            elif model_path.lower() == "best":
+            elif model_path == "best":
                 checkpoint_path = os.path.join(training_dir, "best_model.pth")
-            elif model_path.lower() == "final":
+            elif model_path == "final":
                 # Look for the most recent final model
                 final_models = []
                 final_models.extend(
@@ -330,7 +330,7 @@ class AgentSimulator:
         """Run a complete episode with the trained agent."""
         self.running = True
         obs, info = self.reset()
-        state = self.agent.preprocess_state(obs, info)
+        self.agent.update_state(obs, info)
 
         total_shaped_reward = 0
         total_actual_reward = 0
@@ -341,18 +341,15 @@ class AgentSimulator:
         while self.running:
             # Get action from agent
             with torch.no_grad():
-                action, cost, state = self.agent.choose_action(
-                    state, obs, info, testing=True
-                )
+                action, cost = self.agent.choose_action(obs, info, testing=True)
 
             # Take step in environment
             obs, shaped_reward, actual_reward, terminated, truncated, info = self.step(
                 action
             )
 
-            # Preprocess next state for agent
-            next_state = self.agent.preprocess_state(obs, info)
-            state = next_state
+            # Update agent state
+            self.agent.update_state(obs, info)
 
             # Update totals
             total_shaped_reward += shaped_reward
@@ -374,7 +371,7 @@ class AgentSimulator:
                 time.sleep(2)
                 if self.running:
                     obs, info = self.reset()
-                    state = self.agent.preprocess_state(obs, info)
+                    self.agent.update_state(obs, info)
                     total_shaped_reward = 0
                     total_actual_reward = 0
                     success = False
