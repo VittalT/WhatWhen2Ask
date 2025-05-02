@@ -1,0 +1,9 @@
+Starting agent simulation...
+Model: 500
+Environment: homegrid-task
+Step delay: 0 seconds
+Agent view: False
+Checkpoint number: 17
+Using device: cpu
+Using device: cpu
+Loading checkpoint: 500

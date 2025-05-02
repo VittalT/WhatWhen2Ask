@@ -40,6 +40,14 @@ class AgentSimulator:
         # Store checkpoint number for model loading
         self.checkpoint_number = checkpoint_number
 
+        # Check for GPU availability
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")
+
+        # Limit GPU memory usage to approximately 45% of allocation
+        if torch.cuda.is_available():
+            torch.cuda.set_per_process_memory_fraction(0.45)
+
         self.agent = self.load_agent(model_path)
         self.rate = rate
         self.render_agent_view = render_agent_view
@@ -69,16 +77,11 @@ class AgentSimulator:
         Args:
             model_path: Can be "best", "final", an integer episode number, or a file path
         """
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Limit GPU memory usage to approximately 45% of allocation
-        if torch.cuda.is_available():
-            torch.cuda.set_per_process_memory_fraction(0.45)
-
         # Create directory paths
         checkpoint_dir = f"checkpoints{self.checkpoint_number}"
         training_dir = os.path.join(checkpoint_dir, "training")
 
+        # Initialize agent
         if any(x in str(model_path) for x in ["blip", "gpt", "o1", "o2", "o3", "o4"]):
             agent = LLMAgent(
                 model_name=model_path,
@@ -94,6 +97,8 @@ class AgentSimulator:
             )
 
             # Handle different checkpoint formats
+            checkpoint_path = None
+
             if isinstance(model_path, int) or model_path.isdigit():
                 # Convert string to int if it's a digit string
                 episode_num = (
@@ -125,7 +130,7 @@ class AgentSimulator:
 
             print(f"Loading model from: {checkpoint_path}")
             checkpoint = torch.load(
-                checkpoint_path, map_location=device, weights_only=False
+                checkpoint_path, map_location=self.device, weights_only=False
             )
             agent.model.load_state_dict(checkpoint["model_state_dict"])
             if "epsilon" in checkpoint:

@@ -8,6 +8,7 @@ import numpy as np
 from tokenizers import Tokenizer
 import cv2
 from pprint import pprint
+import torch
 
 from homegrid.window import Window
 from homegrid.DQN import DQNAgent
@@ -30,6 +31,14 @@ reward_components = {
 reward_history = {k: [] for k in reward_components.keys()}
 reward_fig = None
 reward_canvas = None
+
+# Set device for PyTorch
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
+# Limit GPU memory usage if available
+if torch.cuda.is_available():
+    torch.cuda.set_per_process_memory_fraction(0.45)
 
 
 def create_reward_visualization():
@@ -152,8 +161,12 @@ def reset(env, window, seed=None, agent_view=False):
     agent = DQNAgent(
         env_name="homegrid-task", episodes=0, checkpoint_dir="./checkpoints"
     )
+    # Explicitly move agent to correct device
+    agent.device = device
     agent.env = env
     agent.reset_episode(obs, info)
+
+    # Initialize potential tracking
     prev_potential = agent.compute_potential(info)
 
     # Reset reward components
@@ -230,15 +243,12 @@ def step(env, window, action, agent_view=False):
 
     # Get the shaped reward and extract components
     if agent:
+        # Update the state in the agent
+        agent.update_state(obs, info, action)
+
         # Calculate current potential and get components
         current_potential = agent.compute_potential(info)
         components = agent.get_potential_components()
-
-        # Update visited rooms and cells in the agent
-        agent_pos = info["symbolic_state"]["agent"]["pos"]
-        agent_room = info["symbolic_state"]["agent"]["room"]
-        agent.visited_rooms.add(agent_room)
-        agent.visited_cells.add(tuple(agent_pos))
 
         # Store the components
         reward_components["pot_dist"] = components["pot_dist"]
