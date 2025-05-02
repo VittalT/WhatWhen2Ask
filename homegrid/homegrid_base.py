@@ -14,6 +14,19 @@ from homegrid.base import MiniGridEnv, Grid, Storage, Inanimate, Pickable
 from homegrid.layout import ThreeRoom, CANS, TRASH, room2name
 
 
+def seeded_random(seed_val=42, fixed=True):
+    """Reset seed and return random instance for consistent sampling."""
+    if fixed:
+        random.seed(seed_val)
+    return random
+
+
+def seeded_np_random(seed_val=42):
+    """Reset numpy seed and return numpy random for consistent sampling."""
+    np.random.seed(seed_val)
+    return np.random
+
+
 class HomeGridBase(MiniGridEnv):
 
     class Actions(IntEnum):
@@ -49,10 +62,6 @@ class HomeGridBase(MiniGridEnv):
         p_unsafe=0.0,
         fixed_state=None,
     ):
-        # Set a fixed seed for deterministic behavior
-        random.seed(42)
-        np.random.seed(42)
-
         self.layout = layout()
         self.textures = self.layout.textures
         super().__init__(
@@ -111,8 +120,8 @@ class HomeGridBase(MiniGridEnv):
             self.place_obj(obj, top=ob["pos"], size=(1, 1), max_tries=1)
 
     def _add_cans_to_house(self):
-        cans = random.sample(CANS, self.num_trashcans)
-        poss = random.sample(self.layout.valid_poss["can"], self.num_trashcans)
+        cans = seeded_random().sample(CANS, self.num_trashcans)
+        poss = seeded_random().sample(self.layout.valid_poss["can"], self.num_trashcans)
         can_objs = []
         for i, can in enumerate(cans):
             obj = Storage(
@@ -129,8 +138,8 @@ class HomeGridBase(MiniGridEnv):
             self.objs.append(obj)
 
     def _add_objs_to_house(self):
-        trash_objs = random.sample(TRASH, self.num_trashobjs)
-        poss = random.sample(self.layout.valid_poss["obj"], self.num_trashobjs)
+        trash_objs = seeded_random().sample(TRASH, self.num_trashobjs)
+        poss = seeded_random().sample(self.layout.valid_poss["obj"], self.num_trashobjs)
         trashobj_objs = []
         for i, trash in enumerate(trash_objs):
             obj = Pickable(trash, self.textures[trash])
@@ -155,7 +164,7 @@ class HomeGridBase(MiniGridEnv):
             self._add_objs_to_house()
 
         # Place agent
-        agent_poss = random.choice(self.layout.valid_poss["agent_start"])
+        agent_poss = seeded_random().choice(self.layout.valid_poss["agent_start"])
         self.agent_pos = self.place_agent(top=agent_poss, size=(1, 1))
 
     def _create_layout(self, width, height):
@@ -166,7 +175,7 @@ class HomeGridBase(MiniGridEnv):
         self.cell_to_room = self.layout.cell_to_room
 
     def _maybe_teleport(self):
-        if np.random.random() > self.p_teleport:
+        if seeded_np_random().random() > self.p_teleport:
             return False
         objs = [
             o
@@ -178,9 +187,9 @@ class HomeGridBase(MiniGridEnv):
             print([o.cur_pos for o in self.objs])
             print(self.all_events)
             return False
-        obj = random.choice(objs)
+        obj = seeded_random().choice(objs)
         # Choose a random new location with no object to place this
-        poss = random.choice(
+        poss = seeded_random().choice(
             [
                 pos
                 for pos in self.layout.valid_poss["obj"]
@@ -196,10 +205,10 @@ class HomeGridBase(MiniGridEnv):
 
     def _maybe_spawn(self):
         new_objs = [t for t in TRASH if t not in [o.name for o in self.objs]]
-        if np.random.rand() < 0.1 * len(new_objs):
-            trash = random.choice(new_objs)
+        if seeded_np_random().rand() < 0.1 * len(new_objs):
+            trash = seeded_random().choice(new_objs)
             obj = Pickable(trash, self.textures[trash], invisible=True)
-            poss = random.choice(
+            poss = seeded_random().choice(
                 [
                     pos
                     for pos in self.layout.valid_poss["obj"]
@@ -214,14 +223,16 @@ class HomeGridBase(MiniGridEnv):
         return None
 
     def _maybe_unsafe(self):
-        if len(self.unsafe_poss) == 0 and np.random.rand() < self.p_unsafe:
-            can = random.choice([o for o in self.objs if isinstance(o, Storage)])
+        if len(self.unsafe_poss) == 0 and seeded_np_random().rand() < self.p_unsafe:
+            can = seeded_random().choice(
+                [o for o in self.objs if isinstance(o, Storage)]
+            )
             self.unsafe_poss = set()
             self.unsafe_name = can.name
             for x in [can.cur_pos[0] - 1, can.cur_pos[0], can.cur_pos[0] + 1]:
                 for y in [can.cur_pos[1] - 1, can.cur_pos[1], can.cur_pos[1] + 1]:
                     self.unsafe_poss.add((x, y))
-            self.unsafe_end = self.step_count + random.randint(1, 10)
+            self.unsafe_end = self.step_count + seeded_random().randint(1, 10)
             return can
         return None
 
