@@ -718,7 +718,7 @@ batch_size_multiplier = (
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints16"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints17"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -789,21 +789,21 @@ if __name__ == "__main__":
     # OPTION 3: Test code quickly to check it doesnt break
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=10,
-        save_interval=5,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=10,
+    #     save_interval=5,
+    #     use_gpu=True,
+    # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            5,
-            10,
-            5,
-        ),
-        test_episodes=50,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         5,
+    #         10,
+    #         5,
+    #     ),
+    #     test_episodes=50,
+    #     use_gpu=True,
+    # )
 
     # train_agent(
     #     num_episodes=10,
@@ -825,21 +825,21 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=20000,
-    #     save_interval=500,
-    #     use_gpu=True,
-    # )
+    train_agent(
+        num_episodes=6000,
+        save_interval=500,
+        use_gpu=True,
+    )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         5000,
-    #         20000,
-    #         5000,
-    #     ),
-    #     test_episodes=5000,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            2000,
+            6000,
+            2000,
+        ),
+        test_episodes=5000,
+        use_gpu=True,
+    )
 
     # test_agent(checkpoint=6000, num_episodes=5000, use_gpu=True)
 
