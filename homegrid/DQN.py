@@ -160,7 +160,7 @@ class DQNAgent:
         self.alpha = 0.0005  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 64  # Larger batch size for better gradient estimates
+        self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.01  # Higher minimum exploration rate
@@ -178,12 +178,12 @@ class DQNAgent:
         self.previous_episode = 0
 
         # Target network update frequency (update every N steps)
-        self.target_update_freq = 500
+        self.target_update_freq = 1000
         self.total_steps = 0
 
         # Memory parameters
         self.replay_buffer = {}
-        self.max_replay_buffer_size = 100_000  # Reduced for computational efficiency
+        self.max_replay_buffer_size = 20_000  # Reduced for computational efficiency
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -218,7 +218,7 @@ class DQNAgent:
         self.hint_threshold = 0.95
 
         # Checkpoint interval
-        self.checkpoint_interval = 500
+        self.checkpoint_interval = 100
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(self.checkpoint_dir, exist_ok=True)
 
