@@ -438,7 +438,7 @@ if __name__ == "__main__":
         help='Path to the model or "best" for best model',
     )
     parser.add_argument(
-        "--rate", type=float, default=0.1, help="Time delay between steps (seconds)"
+        "--rate", type=float, default=0, help="Time delay between steps (seconds)"
     )
     parser.add_argument(
         "--env", type=str, default="homegrid-task", help="Environment name"
