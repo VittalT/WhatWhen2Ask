@@ -273,7 +273,7 @@ class AgentSimulator:
 
         # Reset agent tracking
         self.agent.current_hint = ""
-        self.agent.reset_episode(info)
+        self.agent.reset_episode(obs, info)
 
         # Get image
         img = obs["image"] if self.render_agent_view else self.env.get_frame()

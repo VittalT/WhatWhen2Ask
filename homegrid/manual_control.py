@@ -10,7 +10,7 @@ import cv2
 from pprint import pprint
 
 from homegrid.window import Window
-from homegrid.DQN import DQNAgent, get_fasttext_embedding
+from homegrid.DQN import DQNAgent
 
 tok = Tokenizer.from_pretrained("t5-small")
 
@@ -153,7 +153,7 @@ def reset(env, window, seed=None, agent_view=False):
         env_name="homegrid-task", episodes=0, checkpoint_dir="./checkpoints"
     )
     agent.env = env
-    agent.reset_episode(info)
+    agent.reset_episode(obs, info)
     prev_potential = agent.compute_potential(info)
 
     # Reset reward components

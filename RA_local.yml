@@ -1,0 +1,20 @@
+name: RA_env
+channels:
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - gym
+  - matplotlib
+  - numpy
+  - pip
+  - python=3.9
+  - pytorch
+  - torchaudio
+  - torchvision
+  - tqdm
+  - pillow
+  - requests
+  - black
+  - opencv
+  - sentence-transformers
+prefix: /opt/anaconda3/envs/RA_env

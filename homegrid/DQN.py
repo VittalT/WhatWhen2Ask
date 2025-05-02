@@ -15,23 +15,9 @@ from datetime import datetime
 import time
 from sentence_transformers import SentenceTransformer
 
-# Load sentence transformer model
-sentence_model = SentenceTransformer("all-MiniLM-L6-v2")
+# Define embedding dimensions
 TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
 HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
-
-
-def get_sentence_embedding(text):
-    """
-    Convert a text (word or phrase) to a sentence embedding using all-MiniLM-L6-v2.
-    """
-    # Handle empty text
-    if not text or text == "none" or text == "":
-        # Return zeros for empty text
-        return torch.zeros(TASK_EMBED_DIM, dtype=torch.float32)
-
-    # Get embedding and convert to tensor
-    return sentence_model.encode(text, convert_to_tensor=True)
 
 
 def visualize_image(image):
@@ -42,24 +28,22 @@ def visualize_image(image):
 
 class DQN(nn.Module):
     def __init__(
-        self, num_actions, task_embed_dim=TASK_EMBED_DIM, hint_embed_dim=HINT_EMBED_DIM
+        self,
+        num_actions,
+        task_embed_dim=384,
+        hint_embed_dim=385,
     ):
         super().__init__()
 
-        # === Agent State Processing ===
-        # Position: (x, y) normalized by (width, height)
-        # Direction: One-hot encoded (4 dims) normalized by 4
-        # Inventory: 5 dims (one hot + none)
+        # === Agent State ===
         self.agent_state_proj = nn.Sequential(
-            nn.Linear(2 + 4 + 5, 64),  # 2 (pos) + 4 (dir) + 5 (inv)
+            nn.Linear(2 + 4 + 5, 64),
             nn.LayerNorm(64),
             nn.ReLU(),
             nn.Linear(64, 32),
         )
 
-        # === Context Processing ===
-        # Task: all-MiniLM-L6-v2 Sentence transformer (384)
-        # LLM hint: all-MiniLM-L6-v2 Sentence transformer + 1 for flag (385)
+        # === Context ===
         self.context_proj = nn.Sequential(
             nn.Linear(task_embed_dim + hint_embed_dim, 256),
             nn.LayerNorm(256),
@@ -67,44 +51,45 @@ class DQN(nn.Module):
             nn.Linear(256, 128),
         )
 
-        # === Observation Processing ===
-        # Egocentric object map: (11, agent_view_size, agent_view_size) - egocentric view, 10 object state pairs + 1 (blocked)
-        self.ego_map_cnn = nn.Sequential(
-            nn.Conv2d(11, 32, kernel_size=2),
+        # === Egocentric Map CNN ===
+        # input: (batch, 11, V, V)
+        self.ego_cnn = nn.Sequential(
+            nn.Conv2d(11, 32, kernel_size=3, padding=1),  # preserve V×V
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Flatten(),
-            nn.Linear(32 * 4, 64),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),  # downsample V→V/2
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d((1, 1)),  # → (batch, 64, 1, 1)
+            nn.Flatten(),  # → (batch, 64)
+            nn.Linear(64, 64),
             nn.LayerNorm(64),
             nn.ReLU(),
         )
 
-        # === Memory Processing ===
-        # Location-based semantic map: (12, H, W)
-        # 11 object state pairs: 4 objects + 3 bins * 2 states + 1 blocked + 1 seen
-        self.global_map_cnn = nn.Sequential(
-            nn.Conv2d(12, 16, kernel_size=5, stride=2),
+        # === Global Map CNN ===
+        # input: (batch, 12, H, W)
+        self.global_cnn = nn.Sequential(
+            nn.Conv2d(12, 16, kernel_size=3, padding=1, stride=2),  # H,W→H/2,W/2
             nn.BatchNorm2d(16),
             nn.ReLU(),
-            nn.Conv2d(16, 32, kernel_size=3, stride=2),
+            nn.Conv2d(16, 32, kernel_size=3, padding=1, stride=2),  # →H/4,W/4
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((1, 1)),
-            nn.Flatten(),
+            nn.AdaptiveAvgPool2d((1, 1)),  # → (batch, 32,1,1)
+            nn.Flatten(),  # → (batch, 32)
             nn.Linear(32, 64),
             nn.LayerNorm(64),
             nn.ReLU(),
         )
 
-        # Object map: (10 x 3) - 10 object state pairs with (x, y, present)
+        # === Other streams ===
         self.object_map_proj = nn.Sequential(
-            nn.Linear(10 * 3, 64),
+            nn.Linear(10 * 3, 64),  # unchanged
             nn.LayerNorm(64),
             nn.ReLU(),
             nn.Linear(64, 32),
         )
-
-        # Past visited: (10 x 2) - Last 10 visited cell locations
         self.visited_proj = nn.Sequential(
             nn.Linear(10 * 2, 32),
             nn.LayerNorm(32),
@@ -112,21 +97,20 @@ class DQN(nn.Module):
             nn.Linear(32, 16),
         )
 
-        # Past actions: (5 x 11) - Last 5 actions + 1 if invalid
+        # dynamically pick up your real action-space size
+        action_dim = num_actions
+        hist_len = 5  # last 5 actions
         self.past_action_proj = nn.Sequential(
-            nn.Linear(5 * 11, 32),
+            nn.Linear(hist_len * (action_dim + 1), 32),
             nn.LayerNorm(32),
             nn.ReLU(),
             nn.Linear(32, 16),
         )
 
-        # === Final Fusion Network ===
-        # Combine all features with attention
-        total_input_dim = 32 + 128 + 64 + 64 + 32 + 16 + 16  # sum of all branches
-        self.attention = nn.MultiheadAttention(embed_dim=total_input_dim, num_heads=8)
-
+        # === Final fusion ===
+        total_dim = 32 + 128 + 64 + 64 + 32 + 16 + 16  # sum of each branch
         self.final_fusion = nn.Sequential(
-            nn.Linear(total_input_dim, 256),
+            nn.Linear(total_dim, 256),
             nn.LayerNorm(256),
             nn.ReLU(),
             nn.Dropout(0.1),
@@ -134,12 +118,7 @@ class DQN(nn.Module):
             nn.LayerNorm(128),
             nn.ReLU(),
         )
-
-        # Policy head for action selection
-        self.policy_head = nn.Sequential(
-            nn.Linear(128, num_actions),
-            nn.LayerNorm(num_actions),
-        )
+        self.policy_head = nn.Linear(128, num_actions)
 
     def forward(
         self,
@@ -151,57 +130,16 @@ class DQN(nn.Module):
         visited,
         past_actions,
     ):
-        """
-        Forward pass through the DQN network.
-
-        Args:
-            agent_state: Tensor of shape (batch_size, 11) - position, direction, inventory
-            context: Tensor of shape (batch_size, 769) - task (384) + hint (385) embeddings
-            ego_map: Tensor of shape (batch_size, 11, agent_view_size, agent_view_size) - egocentric view
-            global_map: Tensor of shape (batch_size, 12, H, W) - full semantic map
-            object_map: Tensor of shape (batch_size, 30) - flattened object states
-            visited: Tensor of shape (batch_size, 20) - past visited locations
-            past_actions: Tensor of shape (batch_size, 55) - action history
-
-        Returns:
-            action_logits: Tensor of shape (batch_size, num_actions)
-        """
-        # Process each input stream
-        agent_feats = self.agent_state_proj(agent_state)
-        context_feats = self.context_proj(context)
-        ego_feats = self.ego_map_cnn(ego_map)
-        global_feats = self.global_map_cnn(global_map)
-        object_feats = self.object_map_proj(object_map)
-        visited_feats = self.visited_proj(visited)
-        action_feats = self.past_action_proj(past_actions)
-
-        # Concatenate all features
-        combined_feats = torch.cat(
-            [
-                agent_feats,
-                context_feats,
-                ego_feats,
-                global_feats,
-                object_feats,
-                visited_feats,
-                action_feats,
-            ],
-            dim=-1,
-        )
-
-        # Apply self-attention
-        attended_feats, _ = self.attention(
-            combined_feats.unsqueeze(0),
-            combined_feats.unsqueeze(0),
-            combined_feats.unsqueeze(0),
-        )
-        attended_feats = attended_feats.squeeze(0)
-
-        # Final fusion and policy
-        fused_feats = self.final_fusion(attended_feats)
-        action_logits = self.policy_head(fused_feats)
-
-        return action_logits
+        a = self.agent_state_proj(agent_state)
+        c = self.context_proj(context)
+        e = self.ego_cnn(ego_map)
+        g = self.global_cnn(global_map)
+        o = self.object_map_proj(object_map)
+        v = self.visited_proj(visited)
+        p = self.past_action_proj(past_actions)
+        x = torch.cat([a, c, e, g, o, v, p], dim=1)
+        h = self.final_fusion(x)
+        return self.policy_head(h)
 
 
 class DQNAgent:
@@ -210,6 +148,13 @@ class DQNAgent:
         # Check if CUDA is available and set the device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
+
+        # Initialize the sentence transformer model
+        # Initialize on CPU for better compatibility with transformers
+        self.sentence_model = SentenceTransformer(
+            "all-MiniLM-L6-v2", device=self.device
+        )
+
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
         self.alpha = 0.0005  # Lower learning rate for more stable learning
@@ -295,9 +240,9 @@ class DQNAgent:
         }
 
         # Initialize state tracking
-        self.all_visited_cells = set()
-        self.visited_cells = deque(maxlen=10)  # Track last 10 visited cells
-        self.past_actions = deque(maxlen=5)  # Track last 5 actions
+        self.visited_cells = set()
+        self.recent_cells = deque(maxlen=10)  # Track last 10 visited cells
+        self.recent_actions = deque(maxlen=5)  # Track last 5 actions
         self.visited_rooms = set()
 
         # For potential-based reward shaping
@@ -312,14 +257,14 @@ class DQNAgent:
         if hasattr(pos[0], "item"):
             pos = (pos[0].item(), pos[1].item())
 
-        self.visited_cells.append(pos)
-        self.all_visited_cells.add(pos)
+        self.recent_cells.append(pos)
+        self.visited_cells.add(pos)
 
     # Add this method to track past actions
     def update_past_actions(self, action):
         """Track the last 5 actions"""
         if action is not None:
-            self.past_actions.append(action)
+            self.recent_actions.append(action)
 
     def update_visited_rooms(self, room):
         """Track the last 5 visited rooms"""
@@ -338,10 +283,10 @@ class DQNAgent:
     def reset_episode(self, obs, info):
         """Reset episode-specific variables and parse task objectives"""
         # Reset visited locations and past actions
-        self.all_visited_cells = set()
+        self.visited_cells = set()
         self.visited_rooms = set()
-        self.visited_cells = deque(maxlen=10)
-        self.past_actions = deque(maxlen=5)
+        self.recent_cells = deque(maxlen=10)
+        self.recent_actions = deque(maxlen=5)
         self.update_state(obs, info)
 
         # Reset other variables
@@ -351,18 +296,31 @@ class DQNAgent:
         # Parse objectives if needed
         self.objectives = self._find_matching_objects(info)
 
+    def get_sentence_embedding(self, text):
+        """Convert text to sentence embedding and move to the correct device."""
+        # Handle empty text
+        if not text or text == "none" or text == "":
+            # Return zeros for empty text
+            return torch.zeros(TASK_EMBED_DIM, dtype=torch.float32, device=self.device)
+
+        # Get embedding and move to the appropriate device
+        embedding = self.sentence_model.encode(text, convert_to_tensor=True)
+        return embedding.to(self.device)
+
     def encode_str(self, text, is_hint=False):
         """
         Convert a string to a sentence embedding using all-MiniLM-L6-v2 and move to device.
         For hints, adds an additional flag dimension.
         """
         # Get the base embedding
-        embedding = get_sentence_embedding(text)
+        embedding = self.get_sentence_embedding(text)
 
         # For hints, add an extra dimension for the flag
         if is_hint:
             # Add a flag indicating if there's a hint (1.0) or not (0.0)
-            flag = torch.tensor([1.0 if text else 0.0], dtype=torch.float32)
+            flag = torch.tensor(
+                [1.0 if text else 0.0], dtype=torch.float32, device=self.device
+            )
             embedding = torch.cat([embedding, flag])
 
         # Add batch dimension and move to device
@@ -401,8 +359,8 @@ class DQNAgent:
         """
 
         def normalize_position(x, y):
-            """Normalize position coordinates by grid dimensions"""
-            return float(x) / self.width, float(y) / self.height
+            """Normalize position coordinates from 1-width/height range to 0-1 range"""
+            return (float(x) - 1) / (self.width - 1), (float(y) - 1) / (self.height - 1)
 
         sym_state = info["symbolic_state"]
         agent_info = sym_state["agent"]
@@ -415,11 +373,11 @@ class DQNAgent:
 
         # Direction: one-hot encode (0-3) and normalize by 4
         dir_int = agent_info["dir"]
-        direction = torch.zeros(4)
+        direction = torch.zeros(4, device=self.device)
         direction[dir_int] = 1.0
 
         # Inventory: 5 dimensions (bottle, fruit, papers, plates, none)
-        inventory = torch.zeros(5)
+        inventory = torch.zeros(5, device=self.device)
         carrying = agent_info["carrying"]
         if carrying is None:
             inventory[4] = 1.0  # None/empty slot
@@ -431,7 +389,13 @@ class DQNAgent:
 
         # Combine agent state
         agent_state = (
-            torch.cat([torch.tensor([pos_x_norm, pos_y_norm]), direction, inventory])
+            torch.cat(
+                [
+                    torch.tensor([pos_x_norm, pos_y_norm], device=self.device),
+                    direction,
+                    inventory,
+                ]
+            )
             .unsqueeze(0)
             .to(self.device)
         )
@@ -449,12 +413,11 @@ class DQNAgent:
             self.device
         )
 
-        # Populate egocentric map by checking objects within 1 cell of agent
-        # Simple implementation for now, can be enhanced with actual observation data
+        # Populate egocentric map by checking objects within view of agent
         for obj in objects:
             obj_pos = obj["pos"]
             obj_x, obj_y = obj_pos
-            # Check if object is within the 3x3 grid centered on agent
+            # Check if object is within the agent's view
             rel_x = obj_x - pos_x + self.agent_view_size // 2  # + to center
             rel_y = obj_y - pos_y + self.agent_view_size // 2  # + to center
 
@@ -463,9 +426,9 @@ class DQNAgent:
                 obj_channel = self.object_to_channel(obj)
                 ego_map[obj_channel, rel_y, rel_x] = 1.0
 
-        # Set blocked channel (last channel) - placeholder for walls/obstacles
-        # In a real implementation, this would be extracted from actual observation data
-        ego_map[10, :, :] = 0.0
+                # Set blocked channel (last channel) - placeholder for walls/obstacles
+                if obj["name"] == "wall" or obj["type"] in ["Storage", "Inanimate"]:
+                    ego_map[10, rel_y, rel_x] = 1.0
 
         ego_map = ego_map.unsqueeze(0)
 
@@ -480,8 +443,12 @@ class DQNAgent:
             channel = self.object_to_channel(obj)
             global_map[channel, y - 1, x - 1] = 1.0
 
+            # If this is a wall or non-overlappable object, mark it in the blocked channel
+            if obj["name"] == "wall" or obj["type"] in ["Storage", "Inanimate"]:
+                global_map[10, y - 1, x - 1] = 1.0
+
         # Add "seen" cells to the last channel
-        for visited_pos in self.all_visited_cells:
+        for visited_pos in self.visited_cells:
             x, y = visited_pos
             for d_x in range(-self.agent_view_size // 2, self.agent_view_size // 2 + 1):
                 for d_y in range(
@@ -504,29 +471,33 @@ class DQNAgent:
 
             # Store (x, y, present)
             idx = channel * 3
-            object_map[idx : idx + 3] = x_norm, y_norm, 1.0
+            object_map[idx : idx + 3] = torch.tensor(
+                [x_norm, y_norm, 1.0], dtype=torch.float32, device=self.device
+            )
 
         object_map = object_map.unsqueeze(0)
 
         # === Past Visited Locations ===
-        visited = -torch.ones(10 * 2).to(self.device)
+        recent_cells_tensor = -torch.ones(10 * 2).to(self.device)
 
-        for i in range(len(self.visited_cells)):
-            x, y = self.visited_cells[i]
+        for i in range(len(self.recent_cells)):
+            x, y = self.recent_cells[i]
             x_norm, y_norm = normalize_position(x, y)
-            visited[i * 2 : i * 2 + 2] = x_norm, y_norm
+            recent_cells_tensor[i * 2 : i * 2 + 2] = torch.tensor(
+                [x_norm, y_norm], dtype=torch.float32, device=self.device
+            )
 
-        visited = visited.unsqueeze(0)
+        recent_cells_tensor = recent_cells_tensor.unsqueeze(0)
 
         # === Past Actions ===
-        past_actions = torch.zeros(5 * 11).to(self.device)
-        past_actions[10::11] = 1.0  # Start invalid
+        recent_actions_tensor = torch.zeros(5 * 11).to(self.device)
+        recent_actions_tensor[10::11] = 1.0  # Start invalid
 
-        for i in range(len(self.past_actions)):
-            past_actions[i * 11 + self.past_actions[i]] = 1.0
-            past_actions[i * 11 + 10] = 0.0
+        for i in range(len(self.recent_actions)):
+            recent_actions_tensor[i * 11 + self.recent_actions[i]] = 1.0
+            recent_actions_tensor[i * 11 + 10] = 0.0
 
-        past_actions = past_actions.unsqueeze(0)
+        recent_actions_tensor = recent_actions_tensor.unsqueeze(0)
 
         return (
             agent_state,
@@ -534,17 +505,194 @@ class DQNAgent:
             ego_map,
             global_map,
             object_map,
-            visited,
-            past_actions,
+            recent_cells_tensor,
+            recent_actions_tensor,
         )
+
+    def uncertainty_score(self, q_values=None):
+        """
+        Compute uncertainty based on the entropy of the softmax over Q-values.
+
+        Args:
+            q_values: Pre-computed Q-values. If None, will compute using the model.
+        """
+        # Get q_values if not provided
+        if q_values is None:
+            with torch.no_grad():
+                q_values = self.model(*self.state)
+
+        # Compute softmax and entropy on GPU for better performance
+        with torch.no_grad():
+            # Apply softmax with numerical stability
+            q_values = q_values.squeeze(0)
+            q_values = q_values - torch.max(q_values)
+            probabilities = torch.softmax(q_values, dim=0)
+
+            # Calculate entropy: -sum(p * log(p))
+            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-9))
+            max_entropy = torch.log(
+                torch.tensor(float(len(q_values)), device=self.device)
+            )
+
+            # Normalize and explicitly move to CPU before computing result
+            result = (entropy / max_entropy).cpu().item()
+
+        return result
+
+    def check_state_shapes(self, state):
+        """
+        Validates the shapes of each tensor in the state tuple.
+
+        Args:
+            state: Tuple of tensors returned by encode_state
+
+        This function prints the actual shapes, expected shapes, and
+        performs assertions to ensure dimensions are correct.
+
+        Returns:
+            bool: True if all assertions pass
+        """
+        agent_state, context, ego_map, global_map, object_map, visited, past_actions = (
+            state
+        )
+
+        print("\n=== State Tensor Shapes ===")
+
+        # Agent State: (batch_size, 11) - position(2), direction(4), inventory(5)
+        print(f"Agent State: {tuple(agent_state.shape)} (Expected: [1, 11])")
+        assert agent_state.shape == (
+            1,
+            11,
+        ), f"Agent state shape mismatch: {agent_state.shape}"
+
+        # Context: (batch_size, task_embed_dim + hint_embed_dim)
+        expected_context_dim = 384 + 385  # task_embed_dim + hint_embed_dim
+        print(
+            f"Context: {tuple(context.shape)} (Expected: [1, {expected_context_dim}])"
+        )
+        assert (
+            context.shape[0] == 1
+        ), f"Context batch dimension mismatch: {context.shape[0]}"
+        assert (
+            context.shape[1] == expected_context_dim
+        ), f"Context feature dimension mismatch: {context.shape[1]}"
+
+        # Egocentric Map: (batch_size, 11, agent_view_size, agent_view_size)
+        print(
+            f"Egocentric Map: {tuple(ego_map.shape)} (Expected: [1, 11, {self.agent_view_size}, {self.agent_view_size}])"
+        )
+        assert ego_map.shape == (
+            1,
+            11,
+            self.agent_view_size,
+            self.agent_view_size,
+        ), f"Ego map shape mismatch: {ego_map.shape}"
+
+        # Global Map: (batch_size, 12, height, width)
+        print(
+            f"Global Map: {tuple(global_map.shape)} (Expected: [1, 12, {self.height}, {self.width}])"
+        )
+        assert global_map.shape == (
+            1,
+            12,
+            self.height,
+            self.width,
+        ), f"Global map shape mismatch: {global_map.shape}"
+
+        # Object Map: (batch_size, 10*3) - 10 objects with (x, y, present)
+        print(f"Object Map: {tuple(object_map.shape)} (Expected: [1, 30])")
+        assert object_map.shape == (
+            1,
+            30,
+        ), f"Object map shape mismatch: {object_map.shape}"
+
+        # Visited Cells: (batch_size, 10*2) - 10 recent cells with (x, y)
+        print(f"Recent Visited Cells: {tuple(visited.shape)} (Expected: [1, 20])")
+        assert visited.shape == (
+            1,
+            20,
+        ), f"Visited cells shape mismatch: {visited.shape}"
+
+        # Past Actions: (batch_size, 5*(num_actions+1)) - 5 recent actions with one-hot encoding + invalid flag
+        action_dim = self.env.action_space.n
+        expected_past_actions_dim = 5 * (action_dim + 1)
+        print(
+            f"Past Actions: {tuple(past_actions.shape)} (Expected: [1, {expected_past_actions_dim}])"
+        )
+        assert past_actions.shape == (
+            1,
+            expected_past_actions_dim,
+        ), f"Past actions shape mismatch: {past_actions.shape}"
+
+        print("\n=== Neural Network Layer Input Shapes ===")
+        print(
+            f"agent_state_proj expects: {tuple(agent_state.shape)} → {self.model.agent_state_proj[0].in_features} features"
+        )
+        assert (
+            self.model.agent_state_proj[0].in_features == agent_state.shape[1]
+        ), "Agent state feature mismatch"
+
+        print(
+            f"context_proj expects: {tuple(context.shape)} → {self.model.context_proj[0].in_features} features"
+        )
+        assert (
+            self.model.context_proj[0].in_features == context.shape[1]
+        ), "Context feature mismatch"
+
+        print(
+            f"ego_cnn expects: {tuple(ego_map.shape)} → {self.model.ego_cnn[0].in_channels} channels, any spatial size"
+        )
+        assert (
+            self.model.ego_cnn[0].in_channels == ego_map.shape[1]
+        ), "Ego map channel mismatch"
+
+        print(
+            f"global_cnn expects: {tuple(global_map.shape)} → {self.model.global_cnn[0].in_channels} channels, any spatial size"
+        )
+        assert (
+            self.model.global_cnn[0].in_channels == global_map.shape[1]
+        ), "Global map channel mismatch"
+
+        print(
+            f"object_map_proj expects: {tuple(object_map.shape)} → {self.model.object_map_proj[0].in_features} features"
+        )
+        assert (
+            self.model.object_map_proj[0].in_features == object_map.shape[1]
+        ), "Object map feature mismatch"
+
+        print(
+            f"visited_proj expects: {tuple(visited.shape)} → {self.model.visited_proj[0].in_features} features"
+        )
+        assert (
+            self.model.visited_proj[0].in_features == visited.shape[1]
+        ), "Visited cells feature mismatch"
+
+        print(
+            f"past_action_proj expects: {tuple(past_actions.shape)} → {self.model.past_action_proj[0].in_features} features"
+        )
+        assert (
+            self.model.past_action_proj[0].in_features == past_actions.shape[1]
+        ), "Past actions feature mismatch"
+
+        print("\nAll shape checks passed ✓")
+        return True
 
     def choose_action(self, obs, info, testing=False):
         """
         Choose an action using epsilon-greedy policy.
         """
-
-        uncertainty = self.uncertainty_score()
         cost = 0
+
+        # Epsilon-greedy action selection - check first to avoid unnecessary computation
+        if not testing and random.random() < self.epsilon:
+            return self.env.action_space.sample(), cost
+
+        # Get Q-values from model (used for both uncertainty calculation and action selection)
+        with torch.no_grad():
+            q_values = self.model(*self.state)
+
+        # Calculate uncertainty using pre-computed Q-values
+        uncertainty = self.uncertainty_score(q_values)
 
         # Check if we should use LLM hints
         if (
@@ -562,32 +710,13 @@ class DQNAgent:
                 # Reprocess state with new hint
                 self.update_state(obs, info)
 
-        # Epsilon-greedy action selection
-        if not testing and random.random() < self.epsilon:
-            return self.env.action_space.sample(), cost
+                # Get new Q-values with the updated hint
+                with torch.no_grad():
+                    q_values = self.model(*self.state)
 
-        # Greedy action selection
-        with torch.no_grad():
-            q_values = self.model(*self.state)
-            action = torch.argmax(q_values, dim=1).item()
-
+        # Greedy action selection using pre-computed q_values
+        action = torch.argmax(q_values, dim=1).item()
         return action, cost
-
-    def uncertainty_score(self):
-        """
-        Compute uncertainty based on the entropy of the softmax over Q-values.
-        Modified to use self.state.
-        """
-        with torch.no_grad():
-            q_values = self.model(*self.state).squeeze(0).cpu().numpy()
-
-        # Compute entropy (on CPU with numpy)
-        q_values = q_values - np.max(q_values)  # for numerical stability
-        probabilities = np.exp(q_values) / np.sum(np.exp(q_values))
-        entropy = -np.sum(probabilities * np.log(probabilities + 1e-9))
-        max_entropy = np.log(len(q_values))
-
-        return entropy / max_entropy
 
     def _find_matching_objects(self, info):
         """
@@ -645,12 +774,14 @@ class DQNAgent:
 
             remaining_objs = self.objectives[current_objective_idx:]
             positions = [agent_pos] + [obj["pos"] for obj in remaining_objs]
-            pot_dist = sum(
-                np.linalg.norm(
-                    np.array(positions[i], float) - np.array(positions[i + 1], float)
-                )
-                for i in range(len(positions) - 1)
-            )
+
+            # Compute sum of distances on GPU
+            pot_dist = 0.0
+            for p, q in zip(positions[:-1], positions[1:]):
+                v_p = torch.tensor(p, dtype=torch.float32, device=self.device)
+                v_q = torch.tensor(q, dtype=torch.float32, device=self.device)
+                pot_dist += torch.norm(v_p - v_q)
+            pot_dist = pot_dist.item()
 
             # Orientation component
             dx = obj_pos[0] - agent_pos[0]
@@ -666,7 +797,7 @@ class DQNAgent:
                 pot_carrying = 1
 
         # pot_rooms = len(self.visited_rooms)
-        pot_expl = len(self.all_visited_cells)
+        pot_expl = len(self.visited_cells)
         pot_time = self.current_step
 
         # Calculate weighted components
@@ -771,35 +902,31 @@ class DQNAgent:
         if self.use_per and len(self.replay_buffer[task_id]["priorities"]) == len(
             self.replay_buffer[task_id]["experiences"]
         ):
-            priorities = np.array(self.replay_buffer[task_id]["priorities"])
-            # Handle zero sum
-            if np.sum(priorities) <= 0:
-                # Fallback to uniform sampling
-                indices = np.random.choice(
-                    buffer_size, actual_batch_size, replace=False
-                )
-                weights = np.ones(actual_batch_size)
-            else:
-                probs = priorities / np.sum(priorities)
-                indices = np.random.choice(
-                    buffer_size, actual_batch_size, p=probs, replace=False
-                )
+            # Keep priorities as a single GPU tensor
+            priorities = torch.tensor(
+                self.replay_buffer[task_id]["priorities"], device=self.device
+            )
 
-                # Calculate importance sampling weights
+            if priorities.sum() <= 0:
+                # Uniform fallback
+                indices = torch.randperm(buffer_size, device=self.device)[
+                    :actual_batch_size
+                ]
+                weights = torch.ones(actual_batch_size, device=self.device)
+            else:
+                probs = priorities / priorities.sum()
+                indices = torch.multinomial(probs, actual_batch_size, replacement=False)
+                # importance-sampling weights
                 self.per_beta = min(1.0, self.per_beta + self.per_beta_increment)
                 weights = (buffer_size * probs[indices]) ** (-self.per_beta)
-                weights /= np.max(weights) if np.max(weights) > 0 else 1.0  # Normalize
+                weights /= weights.max()  # normalize
+
+            # Bring indices back to CPU list
+            indices = indices.cpu().tolist()
 
             # Get selected experiences
             batch = [self.replay_buffer[task_id]["experiences"][i] for i in indices]
             return batch, indices, weights
-            # except Exception as e:
-            #     print(f"PER sampling error: {e}, using uniform sampling instead")
-            #     # Fallback to uniform sampling on error
-            #     batch = random.sample(
-            #         list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
-            #     )
-            #     return batch, None, None
         else:
             # Uniform sampling if PER is disabled or sizes don't match
             batch = random.sample(
@@ -812,9 +939,20 @@ class DQNAgent:
         if not self.use_per or indices is None:
             return
 
-        for idx, error in zip(indices, td_errors):
-            priority = (abs(error) + self.per_epsilon) ** self.per_alpha
+        # Use detach() to avoid gradient computation but keep tensors on GPU until necessary
+        td_errors_abs = td_errors.abs().detach()
+
+        # Update priorities directly with torch tensors
+        for i, idx in enumerate(indices):
+            priority = (td_errors_abs[i].item() + self.per_epsilon) ** self.per_alpha
             self.replay_buffer[task_id]["priorities"][idx] = priority
+
+    def prepare_state_batch(self, state_batch, component_idx):
+        """Helper function to move state components to GPU and batch them"""
+        return torch.cat(
+            [s[component_idx].to(self.device) for s in state_batch],
+            dim=0,
+        )
 
     def train_step(self):
         # Return if no experience is available.
@@ -832,28 +970,12 @@ class DQNAgent:
         # Unpack the batch
         states, actions, rewards, next_states, dones = zip(*batch)
 
-        # Extract and concatenate all state components
-        # Each state is (image, agent_state, context, ego_map, global_map, object_map, visited, past_actions)
-
-        # Prepare batched tensors for current states
-        image_batch = torch.cat([s[0] for s in states], dim=0)
-        agent_state_batch = torch.cat([s[1] for s in states], dim=0)
-        context_batch = torch.cat([s[2] for s in states], dim=0)
-        ego_map_batch = torch.cat([s[3] for s in states], dim=0)
-        global_map_batch = torch.cat([s[4] for s in states], dim=0)
-        object_map_batch = torch.cat([s[5] for s in states], dim=0)
-        visited_batch = torch.cat([s[6] for s in states], dim=0)
-        past_actions_batch = torch.cat([s[7] for s in states], dim=0)
-
-        # Prepare batched tensors for next states
-        next_image_batch = torch.cat([s[0] for s in next_states], dim=0)
-        next_agent_state_batch = torch.cat([s[1] for s in next_states], dim=0)
-        next_context_batch = torch.cat([s[2] for s in next_states], dim=0)
-        next_ego_map_batch = torch.cat([s[3] for s in next_states], dim=0)
-        next_global_map_batch = torch.cat([s[4] for s in next_states], dim=0)
-        next_object_map_batch = torch.cat([s[5] for s in next_states], dim=0)
-        next_visited_batch = torch.cat([s[6] for s in next_states], dim=0)
-        next_past_actions_batch = torch.cat([s[7] for s in next_states], dim=0)
+        # Prepare batched tensors for current and next states
+        # Each state has 7 components (agent_state, context, ego_map, global_map, object_map, recent_cells, recent_actions)
+        state_components = [self.prepare_state_batch(states, i) for i in range(7)]
+        next_state_components = [
+            self.prepare_state_batch(next_states, i) for i in range(7)
+        ]
 
         # Prepare other tensors
         actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
@@ -866,28 +988,12 @@ class DQNAgent:
 
         # Compute target Q-values
         with torch.no_grad():
-            next_q_values = self.target_model(
-                next_agent_state_batch,
-                next_context_batch,
-                next_ego_map_batch,
-                next_global_map_batch,
-                next_object_map_batch,
-                next_visited_batch,
-                next_past_actions_batch,
-            )
+            next_q_values = self.target_model(*next_state_components)
             max_next_q_values, _ = torch.max(next_q_values, dim=1)
             target_q_values = rewards + self.gamma * (1 - dones) * max_next_q_values
 
         # Compute current Q-values
-        current_q_values = self.model(
-            agent_state_batch,
-            context_batch,
-            ego_map_batch,
-            global_map_batch,
-            object_map_batch,
-            visited_batch,
-            past_actions_batch,
-        )
+        current_q_values = self.model(*state_components)
         current_q_values = current_q_values.gather(1, actions).squeeze(1)
 
         # Calculate TD errors (used for updating priorities)
@@ -897,6 +1003,8 @@ class DQNAgent:
         if weights is not None:
             # Element-wise loss
             losses = self.loss_fn(current_q_values, target_q_values)
+            # Ensure weights match the batch dimension for proper broadcasting
+            weights = weights.view(-1, 1).to(losses.device)
             # Apply importance sampling weights
             loss = torch.mean(weights * losses)
         else:
@@ -910,10 +1018,7 @@ class DQNAgent:
         self.optimizer.step()
 
         # Update priorities in replay buffer if using PER
-        if self.use_per and indices is not None:
-            # Get TD errors as numpy array - move back to CPU for numpy operations
-            td_errors_np = td_errors.detach().cpu().numpy()
-            self.update_priorities(task_id, indices, td_errors_np)
+        self.update_priorities(task_id, indices, td_errors)
 
         return loss.item()
 
@@ -989,7 +1094,16 @@ class DQNAgent:
                 original_reward -= cost
 
                 # Create transition and add to replay buffer with maximum priority initially
-                transition = [prev_state, action, shaped_reward, self.state, terminated]
+                # detach and move states to CPU before storing in replay buffer
+                cpu_prev_state = [s.detach().cpu() for s in prev_state]
+                cpu_next_state = [s.detach().cpu() for s in self.state]
+                transition = [
+                    cpu_prev_state,
+                    action,
+                    shaped_reward,
+                    cpu_next_state,
+                    terminated,
+                ]
                 self.add_experience(task_id, transition)
 
                 total_reward += shaped_reward
@@ -1242,9 +1356,11 @@ class DQNAgent:
 
             # Log progress periodically
             if episode % 1000 == 0 or episode == episodes - 1:
+                # Calculate success rate properly using task-specific attempts
                 success_rate = (
-                    task_success_rates[current_task]["successes"] / (episode + 1) * 100
-                )
+                    task_success_rates[current_task]["successes"]
+                    / task_success_rates[current_task]["attempts"]
+                ) * 100
                 avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
                 print(
                     f"Test Episode {episode+1}/{episodes}, "
@@ -1329,7 +1445,28 @@ if __name__ == "__main__":
         checkpoint_dir="checkpoints15",  # or any directory you want
     )
 
-    # Test it
-    agent.env.reset()
-    agent.env.step(0)
-    pprint(dir(agent.env))
+    # Reset environment and agent state
+    obs, info = agent.env.reset()
+    agent.reset_episode(obs, info)
+
+    # Run shape checks to validate tensor dimensions
+    try:
+        agent.check_state_shapes(agent.state)
+
+        # Take a step and check shapes again to ensure consistency
+        action = agent.env.action_space.sample()
+        obs, _, _, _, info = agent.env.step(action)
+        agent.update_state(obs, info, action)
+        agent.check_state_shapes(agent.state)
+
+        print("\nSuccess! All tensor shapes match network expectations.")
+        print("You can now use this agent for training or testing.")
+    except AssertionError as e:
+        print(f"\nERROR: Shape validation failed: {e}")
+        print("Fix the tensor shapes before training the model.")
+
+    # Check environment properties (optional)
+    print("\nEnvironment properties:")
+    print(f"Action space: {agent.env.action_space}")
+    print(f"Observation space: {agent.env.observation_space}")
+    print(f"Current task: {agent.env.task}")
