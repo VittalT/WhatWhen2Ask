@@ -287,14 +287,17 @@ class DQNAgent:
         self.visited_rooms = set()
         self.recent_cells = deque(maxlen=10)
         self.recent_actions = deque(maxlen=5)
-        self.update_state(obs, info)
 
         # Reset other variables
         self.current_step = 0
         self.previous_potential = None
 
+        self.num_llm_calls = 0
+        self.current_hint = ""
+
         # Parse objectives if needed
         self.objectives = self._find_matching_objects(info)
+        self.update_state(obs, info)
 
     def get_sentence_embedding(self, text):
         """Convert text to sentence embedding and move to the correct device."""
@@ -682,6 +685,8 @@ class DQNAgent:
         Choose an action using epsilon-greedy policy.
         """
         cost = 0
+        self.current_step += 1
+        self.total_steps += 1
 
         # Epsilon-greedy action selection - check first to avoid unnecessary computation
         if not testing and random.random() < self.epsilon:
@@ -1054,9 +1059,6 @@ class DQNAgent:
             # Reset episode-specific variables and parse objectives
             self.reset_episode(obs, info)
 
-            self.num_llm_calls = 0
-            self.current_hint = ""
-
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
             task_id = self.env.task
@@ -1078,13 +1080,10 @@ class DQNAgent:
             train_steps = 0
 
             for step in range(self.env.max_steps):
-                self.current_step += 1
                 action, cost = self.choose_action(obs, info)
                 prev_state = self.state
                 obs, reward, terminated, truncated, info = self.env.step(action)
                 self.update_state(obs, info, action)
-
-                self.total_steps += 1
 
                 # Track if we got a success reward
                 if reward > 0:
@@ -1310,9 +1309,6 @@ class DQNAgent:
             # Reset episode-specific variables and parse objectives
             self.reset_episode(obs, info)
 
-            self.num_llm_calls = 0
-            self.current_hint = ""
-
             # Track current task
             current_task = self.env.task
             if current_task not in task_success_rates:
@@ -1323,7 +1319,6 @@ class DQNAgent:
             total_shaped_reward = 0  # Shaped reward
 
             for step in range(self.env.max_steps):
-                self.current_step += 1
                 action, cost = self.choose_action(obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
                 self.update_state(obs, info, action)

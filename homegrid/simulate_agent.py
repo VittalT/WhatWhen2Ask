@@ -293,7 +293,6 @@ class AgentSimulator:
         self.cumulative_actual = []
 
         # Reset agent tracking
-        self.agent.current_hint = ""
         self.agent.reset_episode(obs, info)
 
         # Get image
@@ -319,6 +318,7 @@ class AgentSimulator:
     def step(self, action):
         """Take a step in the environment and update visualizations."""
         obs, reward, terminated, truncated, info = self.env.step(action)
+        self.agent.update_state(obs, info)
 
         # Calculate shaped reward using the updated method
         shaped_reward, actual_reward = self.agent.shaped_reward(reward, info)
@@ -368,9 +368,6 @@ class AgentSimulator:
             obs, shaped_reward, actual_reward, terminated, truncated, info = self.step(
                 action
             )
-
-            # Update agent state
-            self.agent.update_state(obs, info)
 
             # Update totals
             total_shaped_reward += shaped_reward
