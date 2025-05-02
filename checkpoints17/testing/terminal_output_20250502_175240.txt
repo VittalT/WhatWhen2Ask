@@ -1,0 +1,14 @@
+
+GPU INFORMATION:
+  Device: NVIDIA GeForce RTX 4090
+  CUDA version: 12.4
+  Total memory: 25.39 GB
+  Number of GPUs: 1
+Using device: cuda
+Loading checkpoint: checkpoints17/training/model_checkpoint_500.pth
+Loaded from episode 500
+Loaded checkpoint with epsilon 0.0816 and 50000 total steps
+
+Testing agent for 1000 episodes...
+Using device: cuda
+Test Episode 1/1000, Original Reward: 0.0000, Shaped Reward: -0.3929, Success Rate: 0.0%, Avg Steps to Success: N/A
