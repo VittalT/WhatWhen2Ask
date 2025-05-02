@@ -789,21 +789,21 @@ if __name__ == "__main__":
     # OPTION 3: Test code quickly to check it doesnt break
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=10,
-    #     save_interval=5,
-    #     use_gpu=True,
-    # )
+    train_agent(
+        num_episodes=10,
+        save_interval=5,
+        use_gpu=True,
+    )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         5,
-    #         10,
-    #         5,
-    #     ),
-    #     test_episodes=100,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            5,
+            10,
+            5,
+        ),
+        test_episodes=100,
+        use_gpu=True,
+    )
 
     # train_agent(
     #     num_episodes=10,

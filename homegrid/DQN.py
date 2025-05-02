@@ -802,10 +802,10 @@ class DQNAgent:
 
         # Calculate weighted components
         weighted_dist = -0.05 * pot_dist  # negative because closer is better
-        weighted_orientation = 0.1 * pot_orientation
-        weighted_carrying = 0.5 * pot_carrying
-        weighted_expl = 0.025 * pot_expl
-        weighted_time = -0.025 * pot_time  # penalize as time goes
+        weighted_orientation = 0.2 * pot_orientation
+        weighted_carrying = 1.0 * pot_carrying
+        weighted_expl = 0.01 * pot_expl
+        weighted_time = -0.01 * pot_time  # penalize as time goes
 
         # Store components for visualization
         self.potential_components = {
