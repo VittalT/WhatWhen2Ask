@@ -8,6 +8,7 @@ import time
 import multiprocessing
 from datetime import datetime
 import sys
+from itertools import product
 
 
 # Create a function to log output to both console and file
@@ -824,21 +825,21 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=20000,
-        save_interval=500,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=20000,
+    #     save_interval=500,
+    #     use_gpu=True,
+    # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            5000,
-            20000,
-            5000,
-        ),
-        test_episodes=5000,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         5000,
+    #         20000,
+    #         5000,
+    #     ),
+    #     test_episodes=5000,
+    #     use_gpu=True,
+    # )
 
     # test_agent(checkpoint=6000, num_episodes=5000, use_gpu=True)
 
@@ -878,6 +879,51 @@ if __name__ == "__main__":
     #     test_episodes=100,  # Test benchmark with 100 episodes
     #     use_gpu=True,  # Use GPU if available
     # )
+
+    # ===========================================
+    # OPTION 7: Self-contained hyperparam sweep
+    # ===========================================
+
+    # Sweep settings
+    TRAIN_EPISODES = 4_000  # ~50 min of training
+    TEST_EPISODES = 100  # ~3 min of testing
+    LRS = [5e-4, 1e-3]
+    EDS = [0.9995, 0.99975, 0.9999]
+    FIXED_BATCH = 64
+    FIXED_REPLAY_BUFFER_SIZE = 100_000
+    FIXED_USE_PER = False
+
+    print("\n=== STARTING HYPERPARAMETER SWEEP ===")
+    for lr, ed in product(LRS, EDS):
+        run_tag = f"lr{lr}_ed{ed}"
+        run_ckpt = os.path.join(checkpoint_dir, run_tag)
+        os.makedirs(run_ckpt, exist_ok=True)
+
+        print(f"\n--- RUN {run_tag} ---")
+        # 1) create agent with fresh checkpoint dir
+        agent = DQNAgent(
+            env_name="homegrid-task", episodes=TRAIN_EPISODES, checkpoint_dir=run_ckpt
+        )
+        # 2) set hyperparameters
+        agent.alpha = lr
+        agent.epsilon_decay = ed
+        agent.batch_size = FIXED_BATCH
+        agent.max_replay_buffer_size = FIXED_REPLAY_BUFFER_SIZE
+        agent.use_per = FIXED_USE_PER
+
+        # 3) train
+        print(f"Training for {TRAIN_EPISODES} episodes (α={lr}, ε-decay={ed})")
+        agent.train(episodes=TRAIN_EPISODES)
+
+        # 4) test
+        print(f"Testing for {TEST_EPISODES} episodes")
+        avg_reward, avg_shaped = agent.test(episodes=TEST_EPISODES)
+
+        print(
+            f"RESULT {run_tag} → avg orig reward: {avg_reward:.3f}, avg shaped: {avg_shaped:.3f}"
+        )
+
+    print("\n=== SWEEP COMPLETE ===")
 
     # Close the logger at the end of execution
     if isinstance(sys.stdout, Logger):
