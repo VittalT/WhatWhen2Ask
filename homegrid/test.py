@@ -801,7 +801,7 @@ if __name__ == "__main__":
             10,
             5,
         ),
-        test_episodes=100,
+        test_episodes=50,
         use_gpu=True,
     )
 
@@ -884,46 +884,46 @@ if __name__ == "__main__":
     # OPTION 7: Self-contained hyperparam sweep
     # ===========================================
 
-    # Sweep settings
-    TRAIN_EPISODES = 4_000  # ~50 min of training
-    TEST_EPISODES = 100  # ~3 min of testing
-    LRS = [5e-4, 1e-3]
-    EDS = [0.9995, 0.99975, 0.9999]
-    FIXED_BATCH = 64
-    FIXED_REPLAY_BUFFER_SIZE = 100_000
-    FIXED_USE_PER = False
+    # # Sweep settings
+    # TRAIN_EPISODES = 4_000  # ~50 min of training
+    # TEST_EPISODES = 100  # ~3 min of testing
+    # LRS = [5e-4, 1e-3]
+    # EDS = [0.9995, 0.99975, 0.9999]
+    # FIXED_BATCH = 64
+    # FIXED_REPLAY_BUFFER_SIZE = 100_000
+    # FIXED_USE_PER = False
 
-    print("\n=== STARTING HYPERPARAMETER SWEEP ===")
-    for lr, ed in product(LRS, EDS):
-        run_tag = f"lr{lr}_ed{ed}"
-        run_ckpt = os.path.join(checkpoint_dir, run_tag)
-        os.makedirs(run_ckpt, exist_ok=True)
+    # print("\n=== STARTING HYPERPARAMETER SWEEP ===")
+    # for lr, ed in product(LRS, EDS):
+    #     run_tag = f"lr{lr}_ed{ed}"
+    #     run_ckpt = os.path.join(checkpoint_dir, run_tag)
+    #     os.makedirs(run_ckpt, exist_ok=True)
 
-        print(f"\n--- RUN {run_tag} ---")
-        # 1) create agent with fresh checkpoint dir
-        agent = DQNAgent(
-            env_name="homegrid-task", episodes=TRAIN_EPISODES, checkpoint_dir=run_ckpt
-        )
-        # 2) set hyperparameters
-        agent.alpha = lr
-        agent.epsilon_decay = ed
-        agent.batch_size = FIXED_BATCH
-        agent.max_replay_buffer_size = FIXED_REPLAY_BUFFER_SIZE
-        agent.use_per = FIXED_USE_PER
+    #     print(f"\n--- RUN {run_tag} ---")
+    #     # 1) create agent with fresh checkpoint dir
+    #     agent = DQNAgent(
+    #         env_name="homegrid-task", episodes=TRAIN_EPISODES, checkpoint_dir=run_ckpt
+    #     )
+    #     # 2) set hyperparameters
+    #     agent.alpha = lr
+    #     agent.epsilon_decay = ed
+    #     agent.batch_size = FIXED_BATCH
+    #     agent.max_replay_buffer_size = FIXED_REPLAY_BUFFER_SIZE
+    #     agent.use_per = FIXED_USE_PER
 
-        # 3) train
-        print(f"Training for {TRAIN_EPISODES} episodes (α={lr}, ε-decay={ed})")
-        agent.train(episodes=TRAIN_EPISODES)
+    #     # 3) train
+    #     print(f"Training for {TRAIN_EPISODES} episodes (α={lr}, ε-decay={ed})")
+    #     agent.train(episodes=TRAIN_EPISODES)
 
-        # 4) test
-        print(f"Testing for {TEST_EPISODES} episodes")
-        avg_reward, avg_shaped = agent.test(episodes=TEST_EPISODES)
+    #     # 4) test
+    #     print(f"Testing for {TEST_EPISODES} episodes")
+    #     avg_reward, avg_shaped = agent.test(episodes=TEST_EPISODES)
 
-        print(
-            f"RESULT {run_tag} → avg orig reward: {avg_reward:.3f}, avg shaped: {avg_shaped:.3f}"
-        )
+    #     print(
+    #         f"RESULT {run_tag} → avg orig reward: {avg_reward:.3f}, avg shaped: {avg_shaped:.3f}"
+    #     )
 
-    print("\n=== SWEEP COMPLETE ===")
+    # print("\n=== SWEEP COMPLETE ===")
 
     # Close the logger at the end of execution
     if isinstance(sys.stdout, Logger):

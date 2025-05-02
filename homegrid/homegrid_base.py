@@ -44,11 +44,15 @@ class HomeGridBase(MiniGridEnv):
         num_trashobjs=2,
         view_size=3,
         max_steps=100,
-        p_teleport=0.05,
+        p_teleport=0.0,
         max_objects=4,
         p_unsafe=0.0,
         fixed_state=None,
     ):
+        # Set a fixed seed for deterministic behavior
+        random.seed(42)
+        np.random.seed(42)
+
         self.layout = layout()
         self.textures = self.layout.textures
         super().__init__(

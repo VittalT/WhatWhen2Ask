@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 import torch
 from homegrid.window import Window
-from homegrid.DQN import DQNAgent, get_sentence_embedding
+from homegrid.DQN import DQNAgent
 from tokenizers import Tokenizer
 from homegrid.LLM import LLMAgent
 import argparse
@@ -23,28 +23,23 @@ class AgentSimulator:
         model_path="best",
         rate=0.1,
         render_agent_view=False,
-        checkpoint_number=9,
-        episode_number=None,
+        checkpoint_number=13,
     ):
         """
         Simulates a trained agent in the homegrid environment with visualization.
 
         Args:
             env_name: Name of the environment
-            model_path: Path to the trained model or "best" for best model
+            model_path: Path to the model or identifier ("best", "final", or episode number)
             rate: Time delay between steps (seconds)
             render_agent_view: Whether to render from agent's perspective
-            checkpoint_number: Checkpoint folder number (e.g., 9 for checkpoints9)
-            episode_number: Episode number for the model checkpoint
+            checkpoint_number: Checkpoint folder number (e.g., 13 for checkpoints13)
         """
         self.env = gym.make(env_name, disable_env_checker=True)
 
-        # If episode number is provided, override model_path
-        if episode_number is not None:
-            model_path = episode_number
-
         # Store checkpoint number for model loading
         self.checkpoint_number = checkpoint_number
+
         self.agent = self.load_agent(model_path)
         self.rate = rate
         self.render_agent_view = render_agent_view
@@ -60,6 +55,7 @@ class AgentSimulator:
         self.actual_rewards = []
         self.cumulative_shaped = []
         self.cumulative_actual = []
+        self.running = True
 
         # Setup matplotlib
         for k in plt.rcParams:
@@ -67,7 +63,12 @@ class AgentSimulator:
                 plt.rcParams[k] = []
 
     def load_agent(self, model_path):
-        """Load the DQN agent from a checkpoint."""
+        """
+        Load the DQN agent from a checkpoint.
+
+        Args:
+            model_path: Can be "best", "final", an integer episode number, or a file path
+        """
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # Limit GPU memory usage to approximately 45% of allocation
@@ -78,17 +79,28 @@ class AgentSimulator:
         checkpoint_dir = f"checkpoints{self.checkpoint_number}"
         training_dir = os.path.join(checkpoint_dir, "training")
 
-        if any(x in model_path for x in ["blip", "gpt", "o1", "o2", "o3", "o4"]):
+        if any(x in str(model_path) for x in ["blip", "gpt", "o1", "o2", "o3", "o4"]):
             agent = LLMAgent(
                 model_name=model_path,
                 env_name=self.env.unwrapped.spec.id,
                 checkpoint_dir=checkpoint_dir,
             )
         else:
+            # Initialize DQN agent first
+            agent = DQNAgent(
+                env_name=self.env.unwrapped.spec.id,
+                episodes=0,
+                checkpoint_dir=checkpoint_dir,
+            )
+
             # Handle different checkpoint formats
-            if isinstance(model_path, int):
+            if isinstance(model_path, int) or model_path.isdigit():
+                # Convert string to int if it's a digit string
+                episode_num = (
+                    int(model_path) if isinstance(model_path, str) else model_path
+                )
                 checkpoint_path = os.path.join(
-                    training_dir, f"model_checkpoint_{model_path}.pth"
+                    training_dir, f"model_checkpoint_{episode_num}.pth"
                 )
             elif model_path == "best":
                 checkpoint_path = os.path.join(training_dir, "best_model.pth")
@@ -118,6 +130,10 @@ class AgentSimulator:
             agent.model.load_state_dict(checkpoint["model_state_dict"])
             if "epsilon" in checkpoint:
                 agent.epsilon = checkpoint["epsilon"]
+            if "total_steps" in checkpoint:
+                agent.total_steps = checkpoint["total_steps"]
+            if "episode" in checkpoint:
+                agent.previous_episode = checkpoint["episode"]
             print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
 
             # Set to evaluation mode
@@ -389,8 +405,7 @@ def simulate_agent(
     rate=0.1,
     env_name="homegrid-task",
     agent_view=False,
-    checkpoint_number=9,
-    episode_number=None,
+    checkpoint_number=13,
 ):
     """
     Simulates a trained agent in the homegrid environment.
@@ -400,8 +415,7 @@ def simulate_agent(
         rate: Time delay between steps (seconds)
         env_name: Name of the environment
         agent_view: Whether to render from agent's perspective
-        checkpoint_number: Checkpoint folder number (e.g., 9 for checkpoints9)
-        episode_number: Episode number for the model checkpoint
+        checkpoint_number: Checkpoint folder number (e.g., 13 for checkpoints13)
     """
     simulator = AgentSimulator(
         env_name=env_name,
@@ -409,7 +423,6 @@ def simulate_agent(
         rate=rate,
         render_agent_view=agent_view,
         checkpoint_number=checkpoint_number,
-        episode_number=episode_number,
     )
     simulator.simulate()
 
@@ -421,7 +434,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="best",
+        default=5,
         help='Path to the model or "best" for best model',
     )
     parser.add_argument(
@@ -436,11 +449,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=int,
-        default=9,
-        help="Checkpoint folder number (e.g., 9 for checkpoints9)",
-    )
-    parser.add_argument(
-        "--episode", type=int, help="Episode number for the model checkpoint"
+        default=16,
+        help="Checkpoint folder number (e.g., 13 for checkpoints13)",
     )
 
     args = parser.parse_args()
@@ -451,9 +461,5 @@ if __name__ == "__main__":
     print(f"Step delay: {args.rate} seconds")
     print(f"Agent view: {args.agent_view}")
     print(f"Checkpoint number: {args.checkpoint}")
-    if args.episode:
-        print(f"Episode number: {args.episode}")
 
-    simulate_agent(
-        args.model, args.rate, args.env, args.agent_view, args.checkpoint, args.episode
-    )
+    simulate_agent(args.model, args.rate, args.env, args.agent_view, args.checkpoint)
