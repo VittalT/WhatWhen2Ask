@@ -31,9 +31,9 @@ SHOW_GRIDLINES = False
 # Draw robot instead of default triangle for agent
 USE_AGENT_TEXTURE = True
 if USE_AGENT_TEXTURE:
-    AGENT_TEXTURE = np.asarray(Image.open(
-        f"{os.path.dirname(__file__)}/assets/robot.png"
-    ))
+    AGENT_TEXTURE = np.asarray(
+        Image.open(f"{os.path.dirname(__file__)}/assets/robot.png")
+    )
 # Center the agent in the view
 CENTERED_VIEW = True
 # Map of agent direction indices to vectors
@@ -99,18 +99,21 @@ class WorldObj:
 ## Homegridv2
 class Storage(WorldObj):
 
-    def __init__(self, name, textures, state=None, action=None,
-        contains=None, reset_broken_after=20):
+    def __init__(
+        self,
+        name,
+        textures,
+        state=None,
+        action=None,
+        contains=None,
+        reset_broken_after=20,
+    ):
         super().__init__(name.replace("_", " "))
-        self.textures = {
-            **textures,
-            "broken": np.rot90(textures["closed"])}
+        self.textures = {**textures, "broken": np.rot90(textures["closed"])}
         self.contains = contains or []
         # valid states {"open", "closed", "broken"}
-        self.state = state if state else \
-            random.choice(["open", "closed"])
-        self.action = action if action else \
-            random.choice(["pedal", "grasp", "lift"])
+        self.state = state if state else random.choice(["open", "closed"])
+        self.action = action if action else random.choice(["pedal", "grasp", "lift"])
         self.broken_t = 0
         self.reset_broken_after = reset_broken_after
 
@@ -128,31 +131,31 @@ class Storage(WorldObj):
 
     def _get_contents(self):
         if len(self.contains) == 0:
-          return None
+            return None
         return self.contains.pop()
 
     def interact(self, action, obj=None):
         if action == "get":
-          if self.state != "open":
-            return False
-          return self._get_contents()
+            if self.state != "open":
+                return False
+            return self._get_contents()
         elif action == "drop":
-          if self.state != "open":
-            return False
-          if len(self.contains) == 0 and obj:
-            obj.cur_pos = (-1, -1)
-            self.contains.append(obj)
-            return True
+            if self.state != "open":
+                return False
+            if len(self.contains) == 0 and obj:
+                obj.cur_pos = (-1, -1)
+                self.contains.append(obj)
+                return True
         elif action in {"pedal", "grasp", "lift"}:
-          if self.state == "closed":
-            if action != self.action:
-              self.state = "broken"
-              self.broken_t = 0
-            else:
-              self.state = "open"
-              return True
+            if self.state == "closed":
+                if action != self.action:
+                    self.state = "broken"
+                    self.broken_t = 0
+                else:
+                    self.state = "open"
+                    return True
         else:
-          raise NotImplementedError(f"Attempting to interact with {action}")
+            raise NotImplementedError(f"Attempting to interact with {action}")
         return False
 
     def tick(self):
@@ -182,17 +185,18 @@ class Pickable(WorldObj):
         return True
 
     def render(self, img):
-        if self.invisible: return
+        if self.invisible:
+            return
         draw_obj(img, self.texture)
 
     def encode(self):
         return (self.name, self.invisible)
 
     def tick(self):
-      if self.invisible:
-        self.invisible_count -= 1
-      if self.invisible_count == 0:
-        self.invisible = False
+        if self.invisible:
+            self.invisible_count -= 1
+        if self.invisible_count == 0:
+            self.invisible = False
 
 
 class Inanimate(WorldObj):
@@ -217,8 +221,7 @@ class Inanimate(WorldObj):
 
 class FloorWithObject(WorldObj):
 
-    def __init__(self, name, texture, agent_can_overlap,
-                 can_overlap):
+    def __init__(self, name, texture, agent_can_overlap, can_overlap):
         super().__init__(name)
         self.texture = texture
         self._agent_can_overlap = agent_can_overlap
@@ -248,8 +251,7 @@ class Wall(WorldObj):
         return False
 
     def render(self, img):
-        fill_coords(img, point_in_rect(0, 1, 0, 1),
-                    np.array([100, 100, 100]))
+        fill_coords(img, point_in_rect(0, 1, 0, 1), np.array([100, 100, 100]))
 
 
 class Grid:
@@ -270,20 +272,20 @@ class Grid:
         self.grid = [None] * width * height
         self.floor_grid = [None] * width * height
 
-#    def __contains__(self, key):
-#        if isinstance(key, WorldObj):
-#            for e in self.grid:
-#                if e is key:
-#                    return True
-#        elif isinstance(key, tuple):
-#            for e in self.grid:
-#                if e is None:
-#                    continue
-#                if (e.color, e.type) == key:
-#                    return True
-#                if key[0] is None and key[1] == e.type:
-#                    return True
-#        return False
+    #    def __contains__(self, key):
+    #        if isinstance(key, WorldObj):
+    #            for e in self.grid:
+    #                if e is key:
+    #                    return True
+    #        elif isinstance(key, tuple):
+    #            for e in self.grid:
+    #                if e is None:
+    #                    continue
+    #                if (e.color, e.type) == key:
+    #                    return True
+    #                if key[0] is None and key[1] == e.type:
+    #                    return True
+    #        return False
 
     def __eq__(self, other):
         grid1 = self.encode()
@@ -378,8 +380,16 @@ class Grid:
 
     @classmethod
     def render_tile(
-        cls, obj, floor, agent_dir=None, highlight=False,
-        tile_size=TILE_PIXELS, subdivs=3, bgcolor="white", pov_dir=None):
+        cls,
+        obj,
+        floor,
+        agent_dir=None,
+        highlight=False,
+        tile_size=TILE_PIXELS,
+        subdivs=3,
+        bgcolor="white",
+        pov_dir=None,
+    ):
         """
         Render a tile and cache the result
         """
@@ -400,9 +410,12 @@ class Grid:
                 shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
             )
         elif bgcolor == "white":
-            img = np.ones(
-                shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
-            ) * 255
+            img = (
+                np.ones(
+                    shape=(tile_size * subdivs, tile_size * subdivs, 3), dtype=np.uint8
+                )
+                * 255
+            )
         else:
             raise ValueError("Unknown color")
 
@@ -419,32 +432,36 @@ class Grid:
 
         # Rotate object textures depending on agent perspective
         if not CENTERED_VIEW:
-          if pov_dir is not None:
-              img = np.rot90(img, k=(pov_dir + 1) % 4)
+            if pov_dir is not None:
+                img = np.rot90(img, k=(pov_dir + 1) % 4)
 
         # Overlay the agent on top
         if agent_dir is not None:
             if USE_AGENT_TEXTURE:
-              draw_obj(img, AGENT_TEXTURE)
-              # Show direction indicator
-              if CENTERED_VIEW:
-                tri_fn = point_in_triangle(
-                    (0.65, 0.29),
-                    (0.87, 0.50),
-                    (0.65, 0.71),
-                )
-                tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir)
-                fill_coords(img, tri_fn, (255, 0, 0))
+                draw_obj(img, AGENT_TEXTURE)
+                # Show direction indicator
+                if CENTERED_VIEW:
+                    tri_fn = point_in_triangle(
+                        (0.65, 0.29),
+                        (0.87, 0.50),
+                        (0.65, 0.71),
+                    )
+                    tri_fn = rotate_fn(
+                        tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir
+                    )
+                    fill_coords(img, tri_fn, (255, 0, 0))
             else:
-              tri_fn = point_in_triangle(
-                  (0.12, 0.19),
-                  (0.87, 0.50),
-                  (0.12, 0.81),
-              )
+                tri_fn = point_in_triangle(
+                    (0.12, 0.19),
+                    (0.87, 0.50),
+                    (0.12, 0.81),
+                )
 
-              # Rotate the agent based on its direction
-              tri_fn = rotate_fn(tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir)
-              fill_coords(img, tri_fn, (255, 0, 0))
+                # Rotate the agent based on its direction
+                tri_fn = rotate_fn(
+                    tri_fn, cx=0.5, cy=0.5, theta=0.5 * math.pi * agent_dir
+                )
+                fill_coords(img, tri_fn, (255, 0, 0))
 
         # Highlight the cell if needed
         if highlight:
@@ -458,8 +475,9 @@ class Grid:
 
         return img
 
-    def render(self, tile_size, agent_pos, agent_dir=None, highlight_mask=None,
-               pov_dir=None):
+    def render(
+        self, tile_size, agent_pos, agent_dir=None, highlight_mask=None, pov_dir=None
+    ):
         """
         Render this grid at a given scale
         :param r: target renderer object
@@ -622,15 +640,11 @@ class MiniGridEnv(gym.Env):
         self.height = height
         self.max_steps = max_steps
         self.see_through_walls = see_through_walls
-        self.rooms = [{'name': 'kitchen',
-                  'pos': (np.int64(4), np.int64(8)),
-                  'room': 'K'},
-                  {'name': 'dining room',
-                  'pos': (np.int64(10), np.int64(8)),
-                  'room': 'D'},
-                  {'name': 'living room',
-                  'pos': (np.int64(10), np.int64(3)),
-                  'room': 'L'},]
+        self.rooms = [
+            {"name": "kitchen", "pos": (np.int64(4), np.int64(8)), "room": "K"},
+            {"name": "dining room", "pos": (np.int64(10), np.int64(8)), "room": "D"},
+            {"name": "living room", "pos": (np.int64(10), np.int64(3)), "room": "L"},
+        ]
 
         # Current position and direction of the agent
         self.agent_pos: np.ndarray = None
@@ -805,7 +819,10 @@ class MiniGridEnv(gym.Env):
             pos = tuple(pos)
 
             # Don't place the object on top of another object
-            if self.grid.get(*pos) is not None and not self.grid.get(*pos).can_overlap():
+            if (
+                self.grid.get(*pos) is not None
+                and not self.grid.get(*pos).can_overlap()
+            ):
                 continue
 
             # Don't place the object where the agent is
@@ -913,32 +930,32 @@ class MiniGridEnv(gym.Env):
         agent_view_size = agent_view_size or self.agent_view_size
 
         if not CENTERED_VIEW:
-          # Facing right
-          if self.agent_dir == 0:
-              topX = self.agent_pos[0]
-              topY = self.agent_pos[1] - agent_view_size // 2
-          # Facing down
-          elif self.agent_dir == 1:
-              topX = self.agent_pos[0] - agent_view_size // 2
-              topY = self.agent_pos[1]
-          # Facing left
-          elif self.agent_dir == 2:
-              topX = self.agent_pos[0] - agent_view_size + 1
-              topY = self.agent_pos[1] - agent_view_size // 2
-          # Facing up
-          elif self.agent_dir == 3:
-              topX = self.agent_pos[0] - agent_view_size // 2
-              topY = self.agent_pos[1] - agent_view_size + 1
-          else:
-              assert False, "invalid agent direction"
+            # Facing right
+            if self.agent_dir == 0:
+                topX = self.agent_pos[0]
+                topY = self.agent_pos[1] - agent_view_size // 2
+            # Facing down
+            elif self.agent_dir == 1:
+                topX = self.agent_pos[0] - agent_view_size // 2
+                topY = self.agent_pos[1]
+            # Facing left
+            elif self.agent_dir == 2:
+                topX = self.agent_pos[0] - agent_view_size + 1
+                topY = self.agent_pos[1] - agent_view_size // 2
+            # Facing up
+            elif self.agent_dir == 3:
+                topX = self.agent_pos[0] - agent_view_size // 2
+                topY = self.agent_pos[1] - agent_view_size + 1
+            else:
+                assert False, "invalid agent direction"
 
-          botX = topX + agent_view_size
-          botY = topY + agent_view_size
+            botX = topX + agent_view_size
+            botY = topY + agent_view_size
         else:
-          topX = self.agent_pos[0] - 1
-          topY = self.agent_pos[1] - 1
-          botX = self.agent_pos[0] + 2
-          botY = self.agent_pos[1] + 2
+            topX = self.agent_pos[0] - 1
+            topY = self.agent_pos[1] - 1
+            botX = self.agent_pos[0] + 2
+            botY = self.agent_pos[1] + 2
         return (topX, topY, botX, botY)
 
     def relative_coords(self, x, y):
@@ -1061,9 +1078,9 @@ class MiniGridEnv(gym.Env):
         # We do this by placing the carried object at the agent's position
         # in the agent's partially observable view
         if CENTERED_VIEW:
-          agent_pos = grid.width // 2, grid.height // 2
+            agent_pos = grid.width // 2, grid.height // 2
         else:
-          agent_pos = grid.width // 2, grid.height - 1
+            agent_pos = grid.width // 2, grid.height - 1
         if self.carrying:
             grid.set(*agent_pos, self.carrying)
         else:
@@ -1096,8 +1113,11 @@ class MiniGridEnv(gym.Env):
         """
         grid, vis_mask = self.gen_obs_grid()
 
-        agent_pos = (self.agent_view_size // 2, self.agent_view_size // 2) if \
-          CENTERED_VIEW else (self.agent_view_size // 2, self.agent_view_size - 1)
+        agent_pos = (
+            (self.agent_view_size // 2, self.agent_view_size // 2)
+            if CENTERED_VIEW
+            else (self.agent_view_size // 2, self.agent_view_size - 1)
+        )
         agent_dir = self.agent_dir if CENTERED_VIEW else 3
 
         # Render the whole grid
@@ -1124,35 +1144,35 @@ class MiniGridEnv(gym.Env):
         # Compute the world coordinates of the bottom-left corner
         # of the agent's view area
         if CENTERED_VIEW:
-          for abs_i in range(self.agent_pos[0] - 1, self.agent_pos[0] + 2):
-            for abs_j in range(self.agent_pos[1] - 1, self.agent_pos[1] + 2):
-              highlight_mask[abs_i, abs_j] = True
+            for abs_i in range(self.agent_pos[0] - 1, self.agent_pos[0] + 2):
+                for abs_j in range(self.agent_pos[1] - 1, self.agent_pos[1] + 2):
+                    highlight_mask[abs_i, abs_j] = True
         else:
-          f_vec = self.dir_vec
-          r_vec = self.right_vec
-          top_left = (
-              self.agent_pos
-              + f_vec * (self.agent_view_size - 1)
-              - r_vec * (self.agent_view_size // 2)
-          )
+            f_vec = self.dir_vec
+            r_vec = self.right_vec
+            top_left = (
+                self.agent_pos
+                + f_vec * (self.agent_view_size - 1)
+                - r_vec * (self.agent_view_size // 2)
+            )
 
-          # For each cell in the visibility mask
-          for vis_j in range(0, self.agent_view_size):
-              for vis_i in range(0, self.agent_view_size):
-                  # If this cell is not visible, don't highlight it
-                  if not vis_mask[vis_i, vis_j]:
-                      continue
+            # For each cell in the visibility mask
+            for vis_j in range(0, self.agent_view_size):
+                for vis_i in range(0, self.agent_view_size):
+                    # If this cell is not visible, don't highlight it
+                    if not vis_mask[vis_i, vis_j]:
+                        continue
 
-                  # Compute the world coordinates of this cell
-                  abs_i, abs_j = top_left - (f_vec * vis_j) + (r_vec * vis_i)
+                    # Compute the world coordinates of this cell
+                    abs_i, abs_j = top_left - (f_vec * vis_j) + (r_vec * vis_i)
 
-                  if abs_i < 0 or abs_i >= self.width:
-                      continue
-                  if abs_j < 0 or abs_j >= self.height:
-                      continue
+                    if abs_i < 0 or abs_i >= self.width:
+                        continue
+                    if abs_j < 0 or abs_j >= self.height:
+                        continue
 
-                  # Mark this cell to be highlighted
-                  highlight_mask[abs_i, abs_j] = True
+                    # Mark this cell to be highlighted
+                    highlight_mask[abs_i, abs_j] = True
 
         # Render the whole grid
         img = self.grid.render(
