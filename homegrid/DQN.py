@@ -1125,7 +1125,7 @@ class DQNAgent:
                     if verbose:
                         print(f"  Updated target network at step {self.total_steps}")
 
-                if terminated or truncated:
+                if terminated or truncated or reward > 0:
                     break
 
             # Decay epsilon after each episode
