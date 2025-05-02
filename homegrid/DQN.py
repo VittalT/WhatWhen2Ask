@@ -978,13 +978,17 @@ class DQNAgent:
         ]
 
         # Prepare other tensors
-        actions = torch.LongTensor(actions).unsqueeze(1).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device)
-        dones = torch.FloatTensor(dones).to(self.device)
+        actions = torch.tensor(actions, dtype=torch.long, device=self.device).unsqueeze(
+            1
+        )
+        rewards = torch.tensor(rewards, dtype=torch.float, device=self.device)
+        dones = torch.tensor(dones, dtype=torch.float, device=self.device)
 
         # Convert importance sampling weights to tensor if using PER
         if weights is not None:
-            weights = torch.FloatTensor(weights).to(self.device)
+            weights = (
+                weights.clone().detach().to(dtype=torch.float32, device=self.device)
+            )
 
         # Compute target Q-values
         with torch.no_grad():
@@ -1004,7 +1008,7 @@ class DQNAgent:
             # Element-wise loss
             losses = self.loss_fn(current_q_values, target_q_values)
             # Ensure weights match the batch dimension for proper broadcasting
-            weights = weights.view(-1, 1).to(losses.device)
+            weights = weights.view(-1, 1)
             # Apply importance sampling weights
             loss = torch.mean(weights * losses)
         else:
