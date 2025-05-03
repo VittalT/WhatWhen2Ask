@@ -189,7 +189,7 @@ class DQNAgent:
         }
 
         # Prioritized experience replay parameters
-        self.use_per = True  # Can set to False if computationally expensive
+        self.use_per = False  # Can set to False if computationally expensive
         self.per_alpha = 0.6
         self.per_beta = 0.4
         self.per_beta_increment = 0.001
