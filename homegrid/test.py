@@ -718,7 +718,7 @@ batch_size_multiplier = (
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints17"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints18"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -826,18 +826,18 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     train_agent(
-        num_episodes=6000,
-        save_interval=500,
+        num_episodes=1000,
+        save_interval=100,
         use_gpu=True,
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            2000,
-            6000,
-            2000,
+            200,
+            1000,
+            200,
         ),
-        test_episodes=1000,
+        test_episodes=100,
         use_gpu=True,
     )
 
