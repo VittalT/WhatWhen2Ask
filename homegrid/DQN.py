@@ -162,7 +162,7 @@ class DQNAgent:
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
+        self.epsilon_decay = 0.999  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.01  # Higher minimum exploration rate
         self.llm_cost = 0.01
         self.num_llm_calls = 0
@@ -189,7 +189,7 @@ class DQNAgent:
         }
 
         # Prioritized experience replay parameters
-        self.use_per = False  # Can set to False if computationally expensive
+        self.use_per = True  # Can set to False if computationally expensive
         self.per_alpha = 0.6
         self.per_beta = 0.4
         self.per_beta_increment = 0.001
