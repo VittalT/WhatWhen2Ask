@@ -355,7 +355,6 @@ class AgentSimulator:
 
         total_shaped_reward = 0
         total_actual_reward = 0
-        success = False
 
         print(f"Starting new episode with task: {self.env.task}")
 
@@ -374,14 +373,13 @@ class AgentSimulator:
             total_actual_reward += actual_reward
 
             if actual_reward > 0:
-                success = True
-                print(f"Success! Task completed with reward {actual_reward}")
+                print(f"Yummy! Got reward {actual_reward}")
 
             # Pause between steps
             time.sleep(self.rate)
 
-            if terminated or truncated or actual_reward > 0:
-                print(f"Episode ended: {'Success' if success else 'Failed'}")
+            if terminated or truncated or info["success"]:
+                print(f"Episode ended: {'Success' if info["success"] else 'Failed'}")
                 print(f"Total shaped reward: {total_shaped_reward:.4f}")
                 print(f"Total actual reward: {total_actual_reward:.4f}")
 
@@ -392,7 +390,6 @@ class AgentSimulator:
                     self.agent.update_state(obs, info)
                     total_shaped_reward = 0
                     total_actual_reward = 0
-                    success = False
                     print(f"Starting new episode with task: {self.env.task}")
 
     def simulate(self):

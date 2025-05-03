@@ -164,7 +164,9 @@ class HomeGridBase(MiniGridEnv):
             self._add_objs_to_house()
 
         # Place agent
-        agent_poss = seeded_random().choice(self.layout.valid_poss["agent_start"])
+        agent_poss = seeded_random(fixed=False).choice(
+            self.layout.valid_poss["agent_start"]
+        )
         self.agent_pos = self.place_agent(top=agent_poss, size=(1, 1))
 
     def _create_layout(self, width, height):

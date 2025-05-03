@@ -313,6 +313,9 @@ def step(env, window, action, agent_view=False):
     elif truncated:
         print("truncated!")
         reset(env, window)
+    elif info["success"]:
+        print(f"success! r={reward}")
+        reset(env, window)
     else:
         img = obs["image"] if agent_view else env.get_frame()
         redraw_with_rewards(window, img)

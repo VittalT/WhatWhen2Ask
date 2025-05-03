@@ -1069,9 +1069,8 @@ class DQNAgent:
 
                 # Track if we got a success reward
                 if reward > 0:
-                    self.current_hint = ""
                     if verbose:
-                        print(f"  Step {step}: Got reward {reward}! Success!")
+                        print(f"  Step {step}: Got reward {reward}!")
 
                 # Apply reward shaping but keep track of original reward
                 shaped_reward, original_reward = self.shaped_reward(reward, info)
@@ -1107,7 +1106,7 @@ class DQNAgent:
                     if verbose:
                         print(f"  Updated target network at step {self.total_steps}")
 
-                if terminated or truncated or reward > 0:
+                if terminated or truncated or info["success"]:
                     break
 
             # Decay epsilon after each episode
@@ -1307,9 +1306,8 @@ class DQNAgent:
 
                 self.total_steps += 1
 
-                # Track success without using shaped rewards
-                if reward > 0:
-                    self.current_hint = ""
+                # Track success based on info["success"] instead of reward
+                if info["success"]:
                     steps_to_success.append(step)
                     # Track task-specific success
                     task_success_rates[current_task]["successes"] += 1
@@ -1328,7 +1326,7 @@ class DQNAgent:
                 if render:
                     self.env.render()
 
-                if terminated or truncated:
+                if terminated or truncated or info["success"]:
                     break
 
             # Record results
