@@ -379,8 +379,10 @@ class AgentSimulator:
             # Pause between steps
             time.sleep(self.rate)
 
-            if terminated or truncated or info["success"]:
-                print(f"Episode ended: {'Success' if info['success'] else 'Failed'}")
+            if terminated or truncated or total_actual_reward >= 1:
+                print(
+                    f"Episode ended: {'Success' if total_actual_reward >= 1 else 'Failed'}"
+                )
                 print(f"Total shaped reward: {total_shaped_reward:.4f}")
                 print(f"Total actual reward: {total_actual_reward:.4f}")
 

@@ -27,6 +27,7 @@ reward_components = {
     "potential": 0,
     "shaped_reward": 0,
     "base_reward": 0,
+    "total_reward": 0,
 }
 reward_history = {k: [] for k in reward_components.keys()}
 reward_fig = None
@@ -179,6 +180,7 @@ def reset(env, window, seed=None, agent_view=False):
         "potential": 0,
         "shaped_reward": 0,
         "base_reward": 0,
+        "total_reward": 0,
     }
     reward_history = {k: [0] for k in reward_components.keys()}
 
@@ -263,6 +265,7 @@ def step(env, window, action, agent_view=False):
         shaped_reward = reward + (gamma * current_potential - prev_potential)
         reward_components["shaped_reward"] = shaped_reward
         reward_components["base_reward"] = reward
+        reward_components["total_reward"] += reward
 
         # Update previous potential for next step
         prev_potential = current_potential
@@ -314,7 +317,7 @@ def step(env, window, action, agent_view=False):
     elif truncated:
         print("truncated!")
         reset(env, window)
-    elif info["success"]:
+    elif reward_components["total_reward"] >= 1:
         print(f"success! r={reward}")
         reset(env, window)
     else:

@@ -1106,7 +1106,7 @@ class DQNAgent:
                     if verbose:
                         print(f"  Updated target network at step {self.total_steps}")
 
-                if terminated or truncated or info["success"]:
+                if terminated or truncated or original_reward_sum >= 1:
                     break
 
             # Decay epsilon after each episode
@@ -1306,12 +1306,6 @@ class DQNAgent:
 
                 self.total_steps += 1
 
-                # Track success based on info["success"] instead of reward
-                if info["success"]:
-                    steps_to_success.append(step)
-                    # Track task-specific success
-                    task_success_rates[current_task]["successes"] += 1
-
                 # Get shaped reward for tracking
                 shaped_reward, original_reward = self.shaped_reward(reward, info)
 
@@ -1323,10 +1317,15 @@ class DQNAgent:
                 total_reward += original_reward
                 total_shaped_reward += shaped_reward
 
+                if total_reward >= 1:
+                    steps_to_success.append(step)
+                    # Track task-specific success
+                    task_success_rates[current_task]["successes"] += 1
+
                 if render:
                     self.env.render()
 
-                if terminated or truncated or info["success"]:
+                if terminated or truncated or total_reward >= 1:
                     break
 
             # Record results
