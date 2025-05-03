@@ -1000,8 +1000,8 @@ class DQNAgent:
         if weights is not None:
             # Element-wise loss
             losses = self.loss_fn(current_q_values, target_q_values)
-            # Ensure weights match the batch dimension for proper broadcasting
-            weights = weights.view(-1, 1)
+            # Keep weights as a 1D tensor to match losses shape [batch_size]
+            weights = weights.view(-1)  # Change from .view(-1, 1) to .view(-1)
             # Apply importance sampling weights
             loss = torch.mean(weights * losses)
         else:
