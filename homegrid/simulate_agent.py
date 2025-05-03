@@ -374,6 +374,7 @@ class AgentSimulator:
 
             if actual_reward > 0:
                 print(f"Yummy! Got reward {actual_reward}")
+                print(info["success"])
 
             # Pause between steps
             time.sleep(self.rate)

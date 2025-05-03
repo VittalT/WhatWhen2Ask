@@ -298,9 +298,10 @@ def step(env, window, action, agent_view=False):
     print("Info: ", obs["token_embed"].shape, obs["image"].shape)
     a = "obs, reward, terminated, truncated, info"
     b = obs, reward, terminated, truncated, info
-    for x, y in zip(a, b):
-        pprint(x)
-        pprint(y)
+    # for x, y in zip(a, b):
+    #     pprint(x)
+    #     pprint(y)
+    print(info)
 
     window.set_caption(
         f"r={reward:.2f} token_id={obs['token']} token="
