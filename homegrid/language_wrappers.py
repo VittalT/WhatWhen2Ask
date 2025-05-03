@@ -14,6 +14,14 @@ from tokenizers import Tokenizer
 from homegrid.base import Pickable, Storage
 from homegrid.layout import room2name
 
+def seeded_random(seed_val=42, fixed=True):
+    """Reset seed and return random instance for consistent sampling."""
+    if fixed:
+        random.seed(seed_val)
+    else:
+        random.seed(None)
+    return random
+
 class MultitaskWrapper(gym.Wrapper):
   """Continually sample tasks during an episode, rewarding the agent for
   completion."""
@@ -27,7 +35,7 @@ class MultitaskWrapper(gym.Wrapper):
     self.tasks = list(MultitaskWrapper.Tasks)
 
   def sample_task(self):
-    task_type = random.choice(self.tasks)
+    task_type = seeded_random().choice(self.tasks)
 
     if task_type == MultitaskWrapper.Tasks.find:
       obj_name = random.choice(self.env.objs).name

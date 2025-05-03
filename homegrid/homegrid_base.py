@@ -18,6 +18,8 @@ def seeded_random(seed_val=42, fixed=True):
     """Reset seed and return random instance for consistent sampling."""
     if fixed:
         random.seed(seed_val)
+    else:
+        random.seed(None)
     return random
 
 
