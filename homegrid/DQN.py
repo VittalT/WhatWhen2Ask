@@ -181,9 +181,12 @@ class DQNAgent:
         self.target_update_freq = 1000
         self.total_steps = 0
 
-        # Memory parameters
-        self.replay_buffer = {}
-        self.max_replay_buffer_size = 20_000  # Reduced for computational efficiency
+        # Memory parameters - use a single replay buffer
+        self.max_replay_buffer_size = 20_000  # Replay buffer capacity
+        self.replay_buffer = {
+            "experiences": deque(maxlen=self.max_replay_buffer_size),
+            "priorities": deque(maxlen=self.max_replay_buffer_size),
+        }
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
@@ -867,36 +870,24 @@ class DQNAgent:
     def update_target_network(self):
         self.target_model.load_state_dict(self.model.state_dict())
 
-    def add_experience(self, task_id, experience, error=None):
+    def add_experience(self, experience, error=None):
         """Add an experience to the replay buffer with priority based on TD error"""
-        if task_id not in self.replay_buffer:
-            self.replay_buffer[task_id] = {
-                "experiences": deque(maxlen=self.max_replay_buffer_size),
-                "priorities": deque(maxlen=self.max_replay_buffer_size),
-            }
-
         # If error is not provided, give it maximum priority (for new experiences)
         if error is None:
             max_priority = 1.0
-            if self.replay_buffer[task_id]["priorities"]:
-                max_priority = max(self.replay_buffer[task_id]["priorities"])
-            self.replay_buffer[task_id]["priorities"].append(max_priority)
+            if self.replay_buffer["priorities"]:
+                max_priority = max(self.replay_buffer["priorities"])
+            self.replay_buffer["priorities"].append(max_priority)
         else:
             # Priority based on TD error
             priority = (abs(error) + self.per_epsilon) ** self.per_alpha
-            self.replay_buffer[task_id]["priorities"].append(priority)
+            self.replay_buffer["priorities"].append(priority)
 
-        self.replay_buffer[task_id]["experiences"].append(experience)
+        self.replay_buffer["experiences"].append(experience)
 
-    def sample_batch(self, task_id):
+    def sample_batch(self):
         """Sample a batch of experiences using prioritized experience replay with error handling"""
-        if task_id not in self.replay_buffer:
-            return None, None, None
-
-        if not self.replay_buffer[task_id]["experiences"]:
-            return None, None, None
-
-        buffer_size = len(self.replay_buffer[task_id]["experiences"])
+        buffer_size = len(self.replay_buffer["experiences"])
         if buffer_size < 1:
             return None, None, None
 
@@ -904,12 +895,12 @@ class DQNAgent:
         actual_batch_size = min(self.batch_size, buffer_size)
 
         # PER sampling
-        if self.use_per and len(self.replay_buffer[task_id]["priorities"]) == len(
-            self.replay_buffer[task_id]["experiences"]
+        if self.use_per and len(self.replay_buffer["priorities"]) == len(
+            self.replay_buffer["experiences"]
         ):
             # Keep priorities as a single GPU tensor
             priorities = torch.tensor(
-                self.replay_buffer[task_id]["priorities"], device=self.device
+                self.replay_buffer["priorities"], device=self.device
             )
 
             if priorities.sum() <= 0:
@@ -930,16 +921,16 @@ class DQNAgent:
             indices = indices.cpu().tolist()
 
             # Get selected experiences
-            batch = [self.replay_buffer[task_id]["experiences"][i] for i in indices]
+            batch = [self.replay_buffer["experiences"][i] for i in indices]
             return batch, indices, weights
         else:
             # Uniform sampling if PER is disabled or sizes don't match
             batch = random.sample(
-                list(self.replay_buffer[task_id]["experiences"]), actual_batch_size
+                list(self.replay_buffer["experiences"]), actual_batch_size
             )
             return batch, None, None
 
-    def update_priorities(self, task_id, indices, td_errors):
+    def update_priorities(self, indices, td_errors):
         """Update priorities in the replay buffer based on TD errors"""
         if not self.use_per or indices is None:
             return
@@ -950,7 +941,7 @@ class DQNAgent:
         # Update priorities directly with torch tensors
         for i, idx in enumerate(indices):
             priority = (td_errors_abs[i].item() + self.per_epsilon) ** self.per_alpha
-            self.replay_buffer[task_id]["priorities"][idx] = priority
+            self.replay_buffer["priorities"][idx] = priority
 
     def prepare_state_batch(self, state_batch, component_idx):
         """Helper function to move state components to GPU and batch them"""
@@ -961,14 +952,11 @@ class DQNAgent:
 
     def train_step(self):
         # Return if no experience is available.
-        if not self.replay_buffer:
+        if not self.replay_buffer["experiences"]:
             return None
 
-        # Using per-task replay buffer
-        task_id = random.choice(list(self.replay_buffer.keys()))
-
         # Sample batch using prioritized experience replay
-        batch, indices, weights = self.sample_batch(task_id)
+        batch, indices, weights = self.sample_batch()
         if batch is None:
             return None
 
@@ -1027,7 +1015,7 @@ class DQNAgent:
         self.optimizer.step()
 
         # Update priorities in replay buffer if using PER
-        self.update_priorities(task_id, indices, td_errors)
+        self.update_priorities(indices, td_errors)
 
         return loss.item()
 
@@ -1061,18 +1049,12 @@ class DQNAgent:
 
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
-            task_id = self.env.task
-            if task_id not in self.replay_buffer:
-                self.replay_buffer[task_id] = {
-                    "experiences": deque(maxlen=self.max_replay_buffer_size),
-                    "priorities": deque(maxlen=self.max_replay_buffer_size),
-                }
 
             # Verbose logging every 500 episodes or as needed
             verbose = episode % 500 == 0
             if verbose:
                 print(
-                    f"\nEpisode {actual_episode + 1}/{self.previous_episode + episodes}, Task: {task_id}"
+                    f"\nEpisode {actual_episode + 1}/{self.previous_episode + episodes}, Task: {self.env.task}"
                 )
                 print(f"Current epsilon: {self.epsilon:.3f}")
 
@@ -1107,7 +1089,7 @@ class DQNAgent:
                     cpu_next_state,
                     terminated,
                 ]
-                self.add_experience(task_id, transition)
+                self.add_experience(transition)
 
                 total_reward += shaped_reward
                 original_reward_sum += original_reward
