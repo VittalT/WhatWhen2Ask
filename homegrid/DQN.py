@@ -168,7 +168,7 @@ class DQNAgent:
         self.num_llm_calls = 0
         self.max_llm_calls = 0  # Disable LLM queries for pure DQN training
         self.current_hint = ""
-        self.agent_view_size = 3
+        self.agent_view_size = 21
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
