@@ -458,15 +458,24 @@ class DQNAgent:
 
         # Calculate view bounds and create visibility mask
         # Include +1 for padding directly in the bounds calculation
-        x_min = max(1, pos_x - self.agent_view_size // 2)
-        x_max = min(self.width + 1, pos_x + self.agent_view_size // 2 + 1)
-        y_min = max(1, pos_y - self.agent_view_size // 2)
-        y_max = min(self.height + 1, pos_y + self.agent_view_size // 2 + 1)
+        x_min = pos_x - self.agent_view_size // 2
+        x_max = pos_x + self.agent_view_size // 2 + 1
+        y_min = pos_y - self.agent_view_size // 2
+        y_max = pos_y + self.agent_view_size // 2 + 1
+
+        x_min_bounded = max(1, x_min)
+        x_max_bounded = min(self.width + 1, x_max)
+        y_min_bounded = max(1, y_min)
+        y_max_bounded = min(self.height + 1, y_max)
 
         # Update global map: clear object channels and mark visible area
         # Coordinates already account for padding
-        self.global_map[:11, y_min:y_max, x_min:x_max] = 0.0
-        self.global_map[11, y_min:y_max, x_min:x_max] = 1.0
+        self.global_map[
+            :11, y_min_bounded:y_max_bounded, x_min_bounded:x_max_bounded
+        ] = 0.0
+        self.global_map[
+            11, y_min_bounded:y_max_bounded, x_min_bounded:x_max_bounded
+        ] = 1.0
 
         # Track which object channels are visible in this frame
         visible_channels = set()
@@ -479,11 +488,20 @@ class DQNAgent:
                 rel_x = view_x - pos_x + self.agent_view_size // 2
                 rel_y = view_y - pos_y + self.agent_view_size // 2
 
+                out_of_bounds = (
+                    view_x < x_min_bounded
+                    or view_x >= x_max_bounded
+                    or view_y < y_min_bounded
+                    or view_y >= y_max_bounded
+                )
                 # Check if cell is blocked using grid
-                cell = self.env.grid.get(view_x, view_y)
-                floor = self.env.grid.get_floor(view_x, view_y)
-                is_blocked = (cell and not cell.agent_can_overlap()) or (
-                    floor and not floor.agent_can_overlap()
+                if not out_of_bounds:
+                    cell = self.env.grid.get(view_x, view_y)
+                    floor = self.env.grid.get_floor(view_x, view_y)
+                is_blocked = (
+                    out_of_bounds
+                    or (cell and not cell.agent_can_overlap())
+                    or (floor and not floor.agent_can_overlap())
                 )
 
                 if is_blocked:
