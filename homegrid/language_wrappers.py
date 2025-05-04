@@ -17,6 +17,7 @@ from homegrid.layout import room2name
 fixed_task = True
 
 
+# 60
 def seeded_random(seed_val=50, fixed=fixed_task):
     """Reset seed and return random instance for consistent sampling."""
     if fixed:

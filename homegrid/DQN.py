@@ -929,12 +929,30 @@ class DQNAgent:
         pot_expl = len(self.visited_cells)
         pot_time = self.current_step
 
+        # Check for blocked moves by examining recent cells
+        pot_blocked = 0
+        # If the action is a movement action but the agent didn't move (same position twice in a row)
+        if len(self.recent_cells) >= 2 and tuple(self.recent_cells[-1]) == tuple(
+            self.recent_cells[-2]
+        ):
+            action = info.get("action")
+            if action is not None:
+                move_actions = [
+                    self.env.actions.up,
+                    self.env.actions.down,
+                    self.env.actions.left,
+                    self.env.actions.right,
+                ]
+                if action in move_actions:
+                    pot_blocked = -1  # Negative value for hitting a wall
+
         # Calculate weighted components
         weighted_dist = -0.05 * pot_dist  # negative because closer is better
         weighted_orientation = 0.2 * pot_orientation
         weighted_carrying = 1.0 * pot_carrying
         weighted_expl = 0.01 * pot_expl
         weighted_time = -0.01 * pot_time  # penalize as time goes
+        weighted_blocked = 0.1 * pot_blocked  # Apply weight to blocked move penalty
 
         # Store components for visualization
         self.potential_components = {
@@ -943,11 +961,13 @@ class DQNAgent:
             "pot_carrying": pot_carrying,
             "pot_expl": pot_expl,
             "pot_time": pot_time,
+            "pot_blocked": pot_blocked,
             "weighted_dist": weighted_dist,
             "weighted_orientation": weighted_orientation,
             "weighted_carrying": weighted_carrying,
             "weighted_expl": weighted_expl,
             "weighted_time": weighted_time,
+            "weighted_blocked": weighted_blocked,
             "current_objective_idx": current_objective_idx,
             "objectives": self.objectives,
         }
@@ -958,6 +978,7 @@ class DQNAgent:
             + weighted_carrying
             + weighted_expl
             + weighted_time
+            + weighted_blocked  # Add blocked move penalty to potential
         )
 
         return potential
