@@ -951,7 +951,7 @@ class DQNAgent:
         weighted_orientation = 0.2 * pot_orientation
         weighted_carrying = 1.0 * pot_carrying
         weighted_expl = 0.01 * pot_expl
-        weighted_time = -0.01 * pot_time  # penalize as time goes
+        weighted_time = -0.00 * pot_time  # penalize as time goes
         weighted_blocked = 0.1 * pot_blocked  # Apply weight to blocked move penalty
 
         # Store components for visualization
