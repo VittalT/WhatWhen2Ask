@@ -20,9 +20,9 @@ fixed_task = True
 def seeded_random(seed_val=42, fixed=fixed_task):
     """Reset seed and return random instance for consistent sampling."""
     if fixed:
-        seeded_random().seed(seed_val)
+        random.seed(seed_val)
     else:
-        seeded_random().seed(None)
+        random.seed(None)
     return random
 
 
