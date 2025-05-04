@@ -507,7 +507,8 @@ class DQNAgent:
                 if is_blocked:
                     blocked_count += 1
                     # Coordinates already account for padding
-                    self.global_map[10, view_y, view_x] = 1.0
+                    if not out_of_bounds:
+                        self.global_map[10, view_y, view_x] = 1.0
                     # Relative position will always be within ego map bounds
                     ego_map[10, rel_y, rel_x] = 1.0
 
