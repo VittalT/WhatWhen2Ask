@@ -13,8 +13,8 @@ from PIL import ImageDraw
 from homegrid.base import MiniGridEnv, Grid, Storage, Inanimate, Pickable
 from homegrid.layout import ThreeRoom, CANS, TRASH, room2name
 
-fixed_agent_pos = False
-fixed_obj_pos = False
+fixed_agent_pos = True
+fixed_obj_pos = True
 
 
 def seeded_random(seed_val=42, fixed=fixed_obj_pos):

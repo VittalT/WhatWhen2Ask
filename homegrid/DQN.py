@@ -389,7 +389,7 @@ class DQNAgent:
             Tuple of tensors needed for DQN forward pass
         """
         # Debug mode flag - set to True to print debug info
-        debug = True
+        debug = False
 
         def normalize_position(x, y):
             """Normalize position coordinates from 1-width/height range to 0-1 range"""
