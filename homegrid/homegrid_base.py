@@ -13,8 +13,11 @@ from PIL import ImageDraw
 from homegrid.base import MiniGridEnv, Grid, Storage, Inanimate, Pickable
 from homegrid.layout import ThreeRoom, CANS, TRASH, room2name
 
+fixed_agent_pos = False
+fixed_obj_pos = False
 
-def seeded_random(seed_val=42, fixed=True):
+
+def seeded_random(seed_val=42, fixed=fixed_obj_pos):
     """Reset seed and return random instance for consistent sampling."""
     if fixed:
         random.seed(seed_val)
@@ -166,7 +169,7 @@ class HomeGridBase(MiniGridEnv):
             self._add_objs_to_house()
 
         # Place agent
-        agent_poss = seeded_random(fixed=False).choice(
+        agent_poss = seeded_random(fixed=fixed_agent_pos).choice(
             self.layout.valid_poss["agent_start"]
         )
         self.agent_pos = self.place_agent(top=agent_poss, size=(1, 1))

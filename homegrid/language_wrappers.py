@@ -14,13 +14,15 @@ from tokenizers import Tokenizer
 from homegrid.base import Pickable, Storage
 from homegrid.layout import room2name
 
+fixed_task = True
 
-def seeded_random(seed_val=42, fixed=True):
+
+def seeded_random(seed_val=42, fixed=fixed_task):
     """Reset seed and return random instance for consistent sampling."""
     if fixed:
-        random.seed(seed_val)
+        seeded_random().seed(seed_val)
     else:
-        random.seed(None)
+        seeded_random().seed(None)
     return random
 
 
@@ -38,25 +40,29 @@ class MultitaskWrapper(gym.Wrapper):
         task_type = seeded_random().choice(self.tasks)
 
         if task_type == MultitaskWrapper.Tasks.find:
-            obj_name = random.choice(self.env.objs).name
+            obj_name = seeded_random().choice(self.env.objs).name
             task = f"find the {obj_name}"
 
             def reward_fn(symbolic_state):
                 return int(symbolic_state["front_obj"] == obj_name)
 
         elif task_type == MultitaskWrapper.Tasks.get:
-            obj_name = random.choice(
-                [ob for ob in self.env.objs if isinstance(ob, Pickable)]
-            ).name
+            obj_name = (
+                seeded_random()
+                .choice([ob for ob in self.env.objs if isinstance(ob, Pickable)])
+                .name
+            )
             task = f"get the {obj_name}"
 
             def reward_fn(symbolic_state):
                 return int(symbolic_state["agent"]["carrying"] == obj_name)
 
         elif task_type == MultitaskWrapper.Tasks.open:
-            obj_name = random.choice(
-                [ob for ob in self.env.objs if isinstance(ob, Storage)]
-            ).name
+            obj_name = (
+                seeded_random()
+                .choice([ob for ob in self.env.objs if isinstance(ob, Storage)])
+                .name
+            )
             task = f"open the {obj_name}"
 
             def reward_fn(symbolic_state):
@@ -65,12 +71,16 @@ class MultitaskWrapper(gym.Wrapper):
                         return int(obj["state"] == "open")
 
         elif task_type == MultitaskWrapper.Tasks.cleanup:
-            obj_name = random.choice(
-                [ob for ob in self.env.objs if isinstance(ob, Pickable)]
-            ).name
-            bin_name = random.choice(
-                [ob for ob in self.env.objs if isinstance(ob, Storage)]
-            ).name
+            obj_name = (
+                seeded_random()
+                .choice([ob for ob in self.env.objs if isinstance(ob, Pickable)])
+                .name
+            )
+            bin_name = (
+                seeded_random()
+                .choice([ob for ob in self.env.objs if isinstance(ob, Storage)])
+                .name
+            )
             task = f"put the {obj_name} in the {bin_name}"
 
             def reward_fn(symbolic_state):
@@ -81,10 +91,12 @@ class MultitaskWrapper(gym.Wrapper):
                         return int(obj_name in obj["contains"])
 
         elif task_type == MultitaskWrapper.Tasks.rearrange:
-            room_code = random.choice(list(self.env.room_to_cells.keys()))
-            obj_name = random.choice(
-                [ob for ob in self.env.objs if isinstance(ob, Pickable)]
-            ).name
+            room_code = seeded_random().choice(list(self.env.room_to_cells.keys()))
+            obj_name = (
+                seeded_random()
+                .choice([ob for ob in self.env.objs if isinstance(ob, Pickable)])
+                .name
+            )
             task = f"move the {obj_name} to the {room2name[room_code]}"
 
             def reward_fn(symbolic_state):
