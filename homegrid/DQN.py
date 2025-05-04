@@ -160,7 +160,7 @@ class DQNAgent:
         self.alpha = 0.0001  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 32  # Larger batch size for better gradient estimates
+        self.batch_size = 128  # Larger batch size for better gradient estimates
         self.episodes = episodes
         self.epsilon_decay = 0.9975  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.01  # Higher minimum exploration rate
@@ -951,8 +951,8 @@ class DQNAgent:
         weighted_orientation = 0.2 * pot_orientation
         weighted_carrying = 1.0 * pot_carrying
         weighted_expl = 0.01 * pot_expl
-        weighted_time = -0.00 * pot_time  # penalize as time goes
-        weighted_blocked = 0.1 * pot_blocked  # Apply weight to blocked move penalty
+        weighted_time = -0.01 * pot_time  # penalize as time goes
+        weighted_blocked = 0.0 * pot_blocked  # Apply weight to blocked move penalty
 
         # Store components for visualization
         self.potential_components = {
