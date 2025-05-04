@@ -285,15 +285,14 @@ class AgentSimulator:
 
     def reset(self):
         """Reset the environment and visualization data."""
-        obs, info = self.env.reset()
+        # Use agent's reset method instead of calling env.reset
+        obs, info = self.agent.reset()
+
         self.steps = []
         self.shaped_rewards = []
         self.actual_rewards = []
         self.cumulative_shaped = []
         self.cumulative_actual = []
-
-        # Reset agent tracking
-        self.agent.reset_episode(obs, info)
 
         # Get image
         img = obs["image"] if self.render_agent_view else self.env.get_frame()
@@ -351,7 +350,6 @@ class AgentSimulator:
         """Run a complete episode with the trained agent."""
         self.running = True
         obs, info = self.reset()
-        self.agent.update_state(obs, info)
 
         total_shaped_reward = 0
         total_actual_reward = 0
@@ -390,7 +388,6 @@ class AgentSimulator:
                 time.sleep(2)
                 if self.running:
                     obs, info = self.reset()
-                    self.agent.update_state(obs, info)
                     total_shaped_reward = 0
                     total_actual_reward = 0
                     print(f"Starting new episode with task: {self.env.task}")

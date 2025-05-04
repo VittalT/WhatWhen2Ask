@@ -174,6 +174,14 @@ class DQNAgent:
         self.width = 12  # bit less than env.width
         self.height = 10  # bit less than env.height
 
+        # Initialize global map with padding
+        self.global_map = torch.zeros(12, self.height + 2, self.width + 2).to(
+            self.device
+        )
+
+        # Track object positions for more efficient updates
+        self.object_positions = {}  # Dictionary to store object positions by channel
+
         # Track episode number from previous training
         self.previous_episode = 0
 
@@ -253,7 +261,44 @@ class DQNAgent:
         self.objectives = []
         self.potential_components = {}
 
-    # Add this method to track visited cells
+    def reset(self):
+        # Reset environment
+        obs, info = self.env.reset()
+        self.current_step = 0
+
+        # Reset global map - the last channel (11) will track which cells have been seen
+        self.global_map = torch.zeros(12, self.height + 2, self.width + 2).to(
+            self.device
+        )
+
+        # Set the world boundaries as blocked in the global map (channel 10)
+        # Top and bottom edges
+        self.global_map[10, 0, :] = 1.0  # Top edge
+        self.global_map[10, self.height + 1, :] = 1.0  # Bottom edge
+        # Left and right edges
+        self.global_map[10, :, 0] = 1.0  # Left edge
+        self.global_map[10, :, self.width + 1] = 1.0  # Right edge
+
+        # Reset object positions tracking
+        self.object_positions = {}
+
+        # Reset visited tracking
+        self.visited_cells = set()
+        self.recent_cells = deque(maxlen=10)
+        self.recent_actions = deque(maxlen=5)
+        self.visited_rooms = set()
+        self.previous_potential = None
+
+        # Reset LLM-related variables
+        self.num_llm_calls = 0
+        self.current_hint = ""
+
+        # Parse objectives if needed
+        self.objectives = self._find_matching_objects(info)
+
+        self.update_state(obs, info)
+        return obs, info
+
     def update_visited_cells(self, pos):
         """Track the last 10 visited cell positions"""
         # Convert numpy values to Python native types if needed
@@ -263,7 +308,6 @@ class DQNAgent:
         self.recent_cells.append(pos)
         self.visited_cells.add(pos)
 
-    # Add this method to track past actions
     def update_past_actions(self, action):
         """Track the last 5 actions"""
         if action is not None:
@@ -282,25 +326,6 @@ class DQNAgent:
         if action is not None:
             self.update_past_actions(action)
         self.state = self.encode_state(obs, info)
-
-    def reset_episode(self, obs, info):
-        """Reset episode-specific variables and parse task objectives"""
-        # Reset visited locations and past actions
-        self.visited_cells = set()
-        self.visited_rooms = set()
-        self.recent_cells = deque(maxlen=10)
-        self.recent_actions = deque(maxlen=5)
-
-        # Reset other variables
-        self.current_step = 0
-        self.previous_potential = None
-
-        self.num_llm_calls = 0
-        self.current_hint = ""
-
-        # Parse objectives if needed
-        self.objectives = self._find_matching_objects(info)
-        self.update_state(obs, info)
 
     def get_sentence_embedding(self, text):
         """Convert text to sentence embedding and move to the correct device."""
@@ -363,6 +388,8 @@ class DQNAgent:
         Returns:
             Tuple of tensors needed for DQN forward pass
         """
+        # Debug mode flag - set to True to print debug info
+        debug = True
 
         def normalize_position(x, y):
             """Normalize position coordinates from 1-width/height range to 0-1 range"""
@@ -371,6 +398,14 @@ class DQNAgent:
         sym_state = info["symbolic_state"]
         agent_info = sym_state["agent"]
         objects = sym_state["objects"]
+
+        if debug:
+            print(f"\n==== ENCODING STATE ====")
+            print(
+                f"Agent position: {agent_info['pos']}, direction: {agent_info['dir']}"
+            )
+            print(f"Carrying: {agent_info['carrying']}")
+            print(f"Number of objects: {len(objects)}")
 
         # === Agent State ===
         # Position: (x, y) - normalized by grid size (width, height)
@@ -412,75 +447,140 @@ class DQNAgent:
         hint_embed = self.encode_str(self.current_hint, is_hint=True)
         context = torch.cat([task_embed, hint_embed], dim=1).to(self.device)
 
-        # === Egocentric Object Map ===
-        # partial view around agent with 11 channels
-        # (10 object types + 1 blocked)
+        # === Initialize maps ===
+        # Egocentric Object Map - partial view around agent with 11 channels
         ego_map = torch.zeros(11, self.agent_view_size, self.agent_view_size).to(
             self.device
         )
 
-        # Populate egocentric map by checking objects within view of agent
-        for obj in objects:
-            obj_pos = obj["pos"]
-            obj_x, obj_y = obj_pos
-            # Check if object is within the agent's view
-            rel_x = obj_x - pos_x + self.agent_view_size // 2  # + to center
-            rel_y = obj_y - pos_y + self.agent_view_size // 2  # + to center
-
-            if 0 <= rel_x < self.agent_view_size and 0 <= rel_y < self.agent_view_size:
-                # Map object to channel
-                obj_channel = self.object_to_channel(obj)
-                ego_map[obj_channel, rel_y, rel_x] = 1.0
-
-                # Set blocked channel (last channel) - placeholder for walls/obstacles
-                if obj["name"] == "wall" or obj["type"] in ["Storage", "Inanimate"]:
-                    ego_map[10, rel_y, rel_x] = 1.0
-
-        ego_map = ego_map.unsqueeze(0)
-
-        # === Global Semantic Map ===
-        # Full map with 12 channels
-        # 11 object state pairs + 1 for seen cells
-        global_map = torch.zeros(12, self.height, self.width).to(self.device)
-
-        # Populate global map with objects from symbolic state
-        for obj in objects:
-            x, y = obj["pos"]
-            channel = self.object_to_channel(obj)
-            global_map[channel, y - 1, x - 1] = 1.0
-
-            # If this is a wall or non-overlappable object, mark it in the blocked channel
-            if obj["name"] == "wall" or obj["type"] in ["Storage", "Inanimate"]:
-                global_map[10, y - 1, x - 1] = 1.0
-
-        # Add "seen" cells to the last channel
-        for visited_pos in self.visited_cells:
-            x, y = visited_pos
-            for d_x in range(-self.agent_view_size // 2, self.agent_view_size // 2 + 1):
-                for d_y in range(
-                    -self.agent_view_size // 2, self.agent_view_size // 2 + 1
-                ):
-                    nx, ny = x + d_x, y + d_y
-                    if 0 < nx <= self.width and 0 < ny <= self.height:
-                        global_map[11, ny - 1, nx - 1] = 1.0
-
-        global_map = global_map.unsqueeze(0)
-
-        # === Object Map: 10 objects with (x, y, present) ===
+        # Object Map: 10 objects with (x, y, present)
         object_map = torch.zeros(10 * 3).to(self.device)
 
+        # Calculate view bounds and create visibility mask
+        # Include +1 for padding directly in the bounds calculation
+        x_min = max(1, pos_x - self.agent_view_size // 2)
+        x_max = min(self.width + 1, pos_x + self.agent_view_size // 2 + 1)
+        y_min = max(1, pos_y - self.agent_view_size // 2)
+        y_max = min(self.height + 1, pos_y + self.agent_view_size // 2 + 1)
+
+        # Update global map: clear object channels and mark visible area
+        # Coordinates already account for padding
+        self.global_map[:11, y_min:y_max, x_min:x_max] = 0.0
+        self.global_map[11, y_min:y_max, x_min:x_max] = 1.0
+
+        # Track which object channels are visible in this frame
+        visible_channels = set()
+
+        # Mark blocking cells for all cells in view
+        blocked_count = 0
+        for view_x in range(x_min, x_max):
+            for view_y in range(y_min, y_max):
+                # Calculate relative position in agent's view (convert to 0-indexed for ego map)
+                rel_x = view_x - pos_x + self.agent_view_size // 2
+                rel_y = view_y - pos_y + self.agent_view_size // 2
+
+                # Check if cell is blocked using grid
+                cell = self.env.grid.get(view_x, view_y)
+                floor = self.env.grid.get_floor(view_x, view_y)
+                is_blocked = (cell and not cell.agent_can_overlap()) or (
+                    floor and not floor.agent_can_overlap()
+                )
+
+                if is_blocked:
+                    blocked_count += 1
+                    # Coordinates already account for padding
+                    self.global_map[10, view_y, view_x] = 1.0
+                    # Relative position will always be within ego map bounds
+                    ego_map[10, rel_y, rel_x] = 1.0
+
+        if debug:
+            print(f"Field of view: x=({x_min},{x_max}), y=({y_min},{y_max})")
+            print(f"Found {blocked_count} blocked cells in view")
+
+        # === Process all objects in a single loop ===
+        visible_obj_count = 0
         for obj in objects:
+            obj_x, obj_y = obj["pos"]
             channel = self.object_to_channel(obj)
-            x, y = obj["pos"]
-            # Normalize position
-            x_norm, y_norm = normalize_position(x, y)
 
-            # Store (x, y, present)
-            idx = channel * 3
-            object_map[idx : idx + 3] = torch.tensor(
-                [x_norm, y_norm, 1.0], dtype=torch.float32, device=self.device
-            )
+            # Calculate relative position in view
+            rel_x = obj_x - pos_x + self.agent_view_size // 2
+            rel_y = obj_y - pos_y + self.agent_view_size // 2
 
+            # Check if position is within view bounds
+            if 0 <= rel_x < self.agent_view_size and 0 <= rel_y < self.agent_view_size:
+                visible_obj_count += 1
+                # Mark this channel as having been seen
+                visible_channels.add(channel)
+
+                # Update the global and ego maps
+                # Coordinates already account for padding in obj_x, obj_y
+                self.global_map[channel, obj_y, obj_x] = 1.0
+                ego_map[channel, rel_y, rel_x] = 1.0
+
+                # If this object has moved, clear its previous position
+                moved = False
+                if channel in self.object_positions and self.object_positions[
+                    channel
+                ] != (obj_x, obj_y):
+                    moved = True
+                    prev_x, prev_y = self.object_positions[channel]
+                    # Only clear if the previous position is not covered by another object
+                    # Coordinates already account for padding
+                    self.global_map[channel, prev_y, prev_x] = 0.0
+
+                if debug and moved:
+                    print(
+                        f"Object {obj['name']} (channel {channel}) moved from {self.object_positions[channel]} to ({obj_x},{obj_y})"
+                    )
+
+                # Update object position in our tracking dictionary
+                self.object_positions[channel] = (obj_x, obj_y)
+
+                # Update object_map tensor with normalized coordinates and presence flag
+                idx = channel * 3
+                obj_x_norm, obj_y_norm = normalize_position(obj_x, obj_y)
+                object_map[idx : idx + 3] = torch.tensor(
+                    [obj_x_norm, obj_y_norm, 1.0],
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+
+        if debug:
+            print(f"Visible objects: {visible_obj_count}")
+            print(f"Total tracked objects: {len(self.object_positions)}")
+
+        # Check for previously tracked objects that should be in view but aren't
+        removed_count = 0
+        for channel, pos in list(self.object_positions.items()):
+            if (
+                channel not in visible_channels
+            ):  # If we didn't see this object in the current frame
+                obj_x, obj_y = pos
+
+                # Check if the object's last known position is in the current view
+                # Compare with the padded view bounds directly
+                if (x_min <= obj_x < x_max) and (y_min <= obj_y < y_max):
+                    removed_count += 1
+                    if debug:
+                        print(
+                            f"Object with channel {channel} at ({obj_x},{obj_y}) has moved/disappeared"
+                        )
+
+                    # Object has moved or disappeared, remove from tracking
+                    del self.object_positions[channel]
+
+                    # Clear the object_map entry
+                    idx = channel * 3
+                    object_map[idx : idx + 3] = 0.0
+
+        if debug and removed_count > 0:
+            print(f"Removed {removed_count} objects that moved out of view")
+            print("==== ENCODING COMPLETE ====\n")
+
+        # Prepare tensors for model input
+        ego_map = ego_map.unsqueeze(0)
+        global_map = self.global_map.unsqueeze(0)
         object_map = object_map.unsqueeze(0)
 
         # === Past Visited Locations ===
@@ -594,15 +694,17 @@ class DQNAgent:
             self.agent_view_size,
         ), f"Ego map shape mismatch: {ego_map.shape}"
 
-        # Global Map: (batch_size, 12, height, width)
+        # Global Map: (batch_size, 12, height+2, width+2) - now padded
+        padded_height = self.height + 2
+        padded_width = self.width + 2
         print(
-            f"Global Map: {tuple(global_map.shape)} (Expected: [1, 12, {self.height}, {self.width}])"
+            f"Global Map: {tuple(global_map.shape)} (Expected: [1, 12, {padded_height}, {padded_width}])"
         )
         assert global_map.shape == (
             1,
             12,
-            self.height,
-            self.width,
+            padded_height,
+            padded_width,
         ), f"Global map shape mismatch: {global_map.shape}"
 
         # Object Map: (batch_size, 10*3) - 10 objects with (x, y, present)
@@ -1042,10 +1144,8 @@ class DQNAgent:
             actual_episode = episode + self.previous_episode
 
             episode_start_time = time.time()
-            obs, info = self.env.reset()
-
-            # Reset episode-specific variables and parse objectives
-            self.reset_episode(obs, info)
+            # Use reset method which already calls env.reset
+            obs, info = self.reset()
 
             total_reward = 0
             original_reward_sum = 0  # Track actual rewards separately
@@ -1285,10 +1385,8 @@ class DQNAgent:
         task_success_rates = {}
 
         for episode in range(episodes):
-            obs, info = self.env.reset()
-
-            # Reset episode-specific variables and parse objectives
-            self.reset_episode(obs, info)
+            # Use reset method which already calls env.reset
+            obs, info = self.reset()
 
             # Track current task
             current_task = self.env.task
@@ -1424,8 +1522,7 @@ if __name__ == "__main__":
     )
 
     # Reset environment and agent state
-    obs, info = agent.env.reset()
-    agent.reset_episode(obs, info)
+    obs, info = agent.reset()
 
     # Run shape checks to validate tensor dimensions
     try:

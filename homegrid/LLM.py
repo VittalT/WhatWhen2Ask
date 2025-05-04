@@ -77,7 +77,8 @@ class LLMAgent:
         """Update the state of the agent"""
         self.state = self.encode_state(obs, info)
 
-    def reset_episode(self, obs, info):
+    def reset(self):
+        obs, info = self.env.reset()
         """Reset episode-specific variables and parse task objectives"""
         # Reset variables
         self.visited_rooms = {info["symbolic_state"]["agent"]["room"]}
@@ -85,6 +86,7 @@ class LLMAgent:
         self.current_step = 0
         self.previous_potential = None
         self.update_state(obs, info)
+        return obs, info
 
     def _find_matching_objects(self, info):
         """
@@ -251,7 +253,7 @@ class LLMAgent:
             obs, info = self.env.reset()
 
             # Reset episode-specific variables and parse objectives
-            self.reset_episode(obs, info)
+            self.reset(obs, info)
 
             # Track current task
             current_task = self.env.task

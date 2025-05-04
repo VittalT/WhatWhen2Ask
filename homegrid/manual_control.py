@@ -155,17 +155,18 @@ def redraw(window, img):
 def reset(env, window, seed=None, agent_view=False):
     global agent, prev_potential, reward_components, reward_history
 
-    obs, info = env.reset()
-    img = obs["image"] if agent_view else env.get_frame()
+    # Initialize agent for reward shaping computation if not initialized
+    if agent is None:
+        agent = DQNAgent(
+            env_name="homegrid-task", episodes=0, checkpoint_dir="./checkpoints"
+        )
+        # Explicitly move agent to correct device
+        agent.device = device
+        agent.env = env
 
-    # Initialize agent for reward shaping computation
-    agent = DQNAgent(
-        env_name="homegrid-task", episodes=0, checkpoint_dir="./checkpoints"
-    )
-    # Explicitly move agent to correct device
-    agent.device = device
-    agent.env = env
-    agent.reset_episode(obs, info)
+    # Use agent's reset method which already calls env.reset
+    obs, info = agent.reset()
+    img = obs["image"] if agent_view else env.get_frame()
 
     # Initialize potential tracking
     prev_potential = agent.compute_potential(info)
