@@ -698,6 +698,8 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
+# Limit num threads
+torch.set_num_threads(2)
 # Limit GPU memory usage to approximately 45% of allocation
 if torch.cuda.is_available():
     # Get total GPU memory

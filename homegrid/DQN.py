@@ -875,6 +875,7 @@ class DQNAgent:
         agent_pos = info["symbolic_state"]["agent"]["pos"]
         agent_dir = info["symbolic_state"]["agent"]["dir"]
         carrying = info["symbolic_state"]["agent"]["carrying"]
+        front_obj = info["symbolic_state"].get("front_obj", None)
 
         # Start with base potential
         potential = 0
@@ -931,28 +932,35 @@ class DQNAgent:
 
         # Check for blocked moves by examining recent cells
         pot_blocked = 0
-        # If the action is a movement action but the agent didn't move (same position twice in a row)
-        if len(self.recent_cells) >= 2 and tuple(self.recent_cells[-1]) == tuple(
-            self.recent_cells[-2]
-        ):
-            action = info.get("action")
-            if action is not None:
-                move_actions = [
-                    self.env.actions.up,
-                    self.env.actions.down,
-                    self.env.actions.left,
-                    self.env.actions.right,
-                ]
-                if action in move_actions:
-                    pot_blocked = -1  # Negative value for hitting a wall
+        action = info.get("action")
+
+        if action is not None:
+            move_actions = [
+                self.env.actions.up,
+                self.env.actions.down,
+                self.env.actions.left,
+                self.env.actions.right,
+            ]
+
+            # Penalty case 1: If the action is a movement action but the agent didn't move (same position twice in a row)
+            if (
+                action in move_actions
+                and len(self.recent_cells) >= 2
+                and tuple(self.recent_cells[-1]) == tuple(self.recent_cells[-2])
+            ):
+                pot_blocked = -1  # Negative value for hitting a wall
+
+            # Penalty case 2: If the action is a non-movement action but there's no object in front
+            if action not in move_actions and front_obj is None:
+                pot_blocked = -1  # Same penalty for wasted actions
 
         # Calculate weighted components
         weighted_dist = -0.05 * pot_dist  # negative because closer is better
         weighted_orientation = 0.2 * pot_orientation
         weighted_carrying = 1.0 * pot_carrying
         weighted_expl = 0.01 * pot_expl
-        weighted_time = -0.01 * pot_time  # penalize as time goes
-        weighted_blocked = 0.0 * pot_blocked  # Apply weight to blocked move penalty
+        weighted_time = -0.00 * pot_time  # penalize as time goes
+        weighted_blocked = 0.1 * pot_blocked  # Apply weight to blocked move penalty
 
         # Store components for visualization
         self.potential_components = {
