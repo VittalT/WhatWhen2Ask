@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
 HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
-USE_LLMS = False
+USE_LLMS = True
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -168,7 +168,7 @@ class DQNAgent:
         self.alpha = 5e-4  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 16
+        self.batch_size = 32
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
@@ -177,7 +177,7 @@ class DQNAgent:
         self.current_hint = ""
         self.agent_view_size = 3
         self.train_start = 500
-        self.train_every = 8
+        self.train_every = 4
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
