@@ -53,10 +53,6 @@ def load_agent(
         env_name=env_name, episodes=episodes, checkpoint_dir=checkpoint_dir
     )
 
-    # Adjust batch size for better GPU utilization
-    if torch.cuda.is_available() and use_gpu:
-        agent.batch_size = agent.batch_size * batch_size_multiplier
-
     # Track the episode number of the loaded checkpoint for proper numbering of future checkpoints
     loaded_episode = 0
 
@@ -717,7 +713,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints38"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints39"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)

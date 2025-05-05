@@ -226,8 +226,8 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
         # Initialize LLMHelper
-        self.o_llm_helper = BLIP2Helper()
-        self.c_llm_helper = GPT4Helper()
+        self.o_llm_helper = None #BLIP2Helper()
+        self.c_llm_helper = None #GPT4Helper()
         self.hint_threshold = 0.95
 
         # Checkpoint interval
