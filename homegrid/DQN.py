@@ -165,7 +165,7 @@ class DQNAgent:
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0.999  # Slower decay helps explore more thoroughly
+        self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
         self.llm_cost = 0.01
         self.num_llm_calls = 0
