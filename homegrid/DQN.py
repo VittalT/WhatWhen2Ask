@@ -27,7 +27,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -170,19 +170,21 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.alpha = 5e-4  # Lower learning rate for more stable learning
+        self.alpha = 1e-4  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 32
+        self.batch_size = 64
         self.episodes = episodes
-        self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
-        self.epsilon_min = 0.05  # Higher minimum exploration rate
+        self.epsilon_decay = 0.998  # Slower decay helps explore more thoroughly
+        self.epsilon_min = 0.15  # Higher minimum exploration rate
         self.open_llm_cost = 0.00  # todo
         self.closed_llm_cost = 0.00  # todo
         self.current_hint = ""
         self.agent_view_size = 23
-        self.train_start = 500
-        self.train_every = 4
+        self.train_start = 3000
+        self.train_every = 8
+        self.max_replay_buffer_size = 200_000  # Replay buffer capacity
+        self.target_update_freq = 2000
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
@@ -212,12 +214,9 @@ class DQNAgent:
         # Track episode number from previous training
         self.previous_episode = 0
 
-        # Target network update frequency (update every N steps)
-        self.target_update_freq = 1000
         self.total_steps = 0
 
         # Memory parameters - use a single replay buffer
-        self.max_replay_buffer_size = 50_000  # Replay buffer capacity
         self.replay_buffer = {
             "experiences": deque(maxlen=self.max_replay_buffer_size),
             "priorities": deque(maxlen=self.max_replay_buffer_size),
