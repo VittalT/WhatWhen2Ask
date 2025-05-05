@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
 HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -165,7 +165,7 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.alpha = 0.0005  # Lower learning rate for more stable learning
+        self.alpha = 5e-4  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
