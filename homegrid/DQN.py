@@ -1574,6 +1574,9 @@ if __name__ == "__main__":
 
     # Reset environment and agent state
     obs, info = agent.reset()
+    print(agent.choose_action(obs, info, testing=True))
+    print(agent.o_llm_helper.query_llm(agent.env.task, obs, info))
+    print(agent.c_llm_helper.query_llm(agent.env.task, obs, info))
 
     # Run shape checks to validate tensor dimensions
     try:

@@ -43,10 +43,7 @@ class LLMAgent:
     def encode_state(self, obs, info):
         """Convert observations and info into format for LLM query"""
         observation = Image.fromarray(obs["image"])
-        # observation.show()
-        context = format_symbolic_state(info["symbolic_state"])
-
-        return observation, context
+        return observation, info
 
     def update_state(self, obs, info):
         """Update the state of the agent"""

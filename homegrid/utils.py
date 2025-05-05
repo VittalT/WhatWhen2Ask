@@ -1,6 +1,9 @@
 # utils.py
 
 """Utility functions for the homegrid environment."""
+import requests
+from io import BytesIO
+from PIL import Image
 
 
 def format_symbolic_state(symbolic_state):
@@ -50,3 +53,95 @@ Instead, analyze the image and state to infer a new, helpful insight that will i
 Provide one concise, specific, and actionable hint that can help the agent over the next several steps.
 """
     return prompt_text
+
+
+def get_dummy_state():
+    dummy_task = "move the fruit to the dining room"
+
+    # Use a known working image URL (Unsplash image).
+    image_url = "https://images.unsplash.com/photo-1516117172878-fd2c41f4a759?ixlib=rb-1.2.1&auto=format&fit=crop&w=634&q=80"
+
+    # Fetch the image.
+    response = requests.get(image_url)
+    response.raise_for_status()  # Ensure the request was successful.
+    dummy_image = Image.open(BytesIO(response.content))
+
+    # Example state and task
+    dummy_context = {
+        "symbolic_state": {
+            "step": 5,
+            "agent": {"pos": (3, 7), "room": "K", "dir": 3, "carrying": None},
+            "objects": [
+                {
+                    "name": "recycling bin",
+                    "type": "Storage",
+                    "pos": (12, 10),
+                    "room": "D",
+                    "state": "closed",
+                    "action": "pedal",
+                    "invisible": None,
+                    "contains": [],
+                },
+                {
+                    "name": "compost bin",
+                    "type": "Storage",
+                    "pos": (11, 1),
+                    "room": "L",
+                    "state": "open",
+                    "action": "grasp",
+                    "invisible": None,
+                    "contains": [],
+                },
+                {
+                    "name": "fruit",
+                    "type": "Pickable",
+                    "pos": (12, 2),
+                    "room": "L",
+                    "state": None,
+                    "action": None,
+                    "invisible": False,
+                    "contains": None,
+                },
+                {
+                    "name": "papers",
+                    "type": "Pickable",
+                    "pos": (3, 10),
+                    "room": "K",
+                    "state": None,
+                    "action": None,
+                    "invisible": False,
+                    "contains": None,
+                },
+                {
+                    "name": "plates",
+                    "type": "Pickable",
+                    "pos": (9, 1),
+                    "room": "L",
+                    "state": None,
+                    "action": None,
+                    "invisible": True,
+                    "contains": None,
+                },
+                {
+                    "name": "bottle",
+                    "type": "Pickable",
+                    "pos": (10, 8),
+                    "room": "D",
+                    "state": None,
+                    "action": None,
+                    "invisible": True,
+                    "contains": None,
+                },
+            ],
+            "front_obj": None,
+            "unsafe": {"name": None, "poss": {}, "end": -1},
+        }
+    }
+    dummy_state = (dummy_image, dummy_context)
+    return dummy_state, dummy_task
+
+
+if __name__ == "__main__":
+    task, state = get_dummy_state()
+    print(task)
+    print(state)

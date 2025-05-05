@@ -10,9 +10,8 @@ import json
 from sentence_transformers import SentenceTransformer, util
 from pprint import pprint
 import os
-from homegrid.utils import format_prompt
+from homegrid.utils import format_prompt, get_dummy_state, format_symbolic_state
 
-# Add this after the imports
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
@@ -59,9 +58,9 @@ class BLIP2Helper:
         (only the action word), compute log-prob-based uncertainty, and map to
         the discrete action set via cosine similarity.
         """
-        observation, context = state
+        observation, info = state
         # observation.show()
-
+        context = format_symbolic_state(info["symbolic_state"])
         prompt = f"""
 You are an expert planner for a robot in a partially‐observable grid. The robot's task is to {task}.
 Actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
@@ -168,14 +167,11 @@ Think through the task and output the action the robot should take next."""
         probs = torch.softmax(logits, dim=-1)
         top_token_probs = torch.max(probs[:, 0, :], dim=-1).values  # (num_tokens,)
         confidence = top_token_probs.mean().item()
-        print(confidence)
 
         # 6. Cosine similarity and choose best action
         gen_embedding = self.encoder.encode(generated_text, convert_to_tensor=True)
         cosines = util.cos_sim(gen_embedding, self.action_embeddings)[0]
         action = int(torch.argmax(cosines))
-
-        print(self.action_space[action])
 
         return action, confidence
 
@@ -222,30 +218,13 @@ Think through the task and output the action the robot should take next."""
 
 
 def main():
-    # Use a known working image URL (Unsplash image).
-    image_url = "https://images.unsplash.com/photo-1516117172878-fd2c41f4a759?ixlib=rb-1.2.1&auto=format&fit=crop&w=634&q=80"
-
-    # Fetch the image.
-    response = requests.get(image_url)
-    response.raise_for_status()  # Ensure the request was successful.
-    pil_image = Image.open(BytesIO(response.content))
-
-    # Create a dummy context as a JSON-formatted string.
-    dummy_context = {
-        "direction": "right",
-        "carrying object": "none",
-        "front object": "wall",
-        "task": "navigate",
-        "prior VLM output": "",
-    }
-    context_str = json.dumps(dummy_context)
-
+    state, task = get_dummy_state()
     # Initialize BLIP2Helper and query the LLM.
-    helper = BLIP2Helper()
-    hint, confidence = helper.query_llm(pil_image, context_str)
+    blip_agent = BLIP2Helper()
+    action, confidence = blip_agent.query_action(state, task)
 
     # Print the results.
-    print("Generated Hint:", hint)
+    print(f"Action: {blip_agent.action_space[action]}")
     print("Confidence:", confidence)
 
 

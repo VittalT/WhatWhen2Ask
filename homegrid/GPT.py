@@ -9,7 +9,9 @@ from openai import OpenAI
 from sentence_transformers import SentenceTransformer, util
 import torch
 from PIL import Image
-from homegrid.utils import format_prompt
+from homegrid.utils import format_prompt, get_dummy_state, format_symbolic_state
+
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 class GPT4Helper:
@@ -56,10 +58,10 @@ class GPT4Helper:
             action: Index of the selected action
             confidence: Confidence score for the selected action
         """
-        observation, context = state
+        observation, info = state
+        context = format_symbolic_state(info["symbolic_state"])
         # observation.show()
-        state_str = jsonpickle.encode(context)
-        print(state_str)
+        # print(state_str)
 
         # Convert PIL image to base64 for API
         import base64
@@ -151,7 +153,6 @@ Now, determine the best next action.
 
         cosines = util.cos_sim(gen_embedding, self.action_embeddings)[0]
         action = int(torch.argmax(cosines))
-        print(self.action_space[action], confidence)
 
         return action, confidence
 
@@ -199,7 +200,7 @@ Now, determine the best next action.
                 ],
             },
         ]
-        print(messages)
+        # print(messages)
 
         # Query GPT using the Chat Completion endpoint with the new API
         response = self.client.chat.completions.create(
@@ -228,95 +229,12 @@ Now, determine the best next action.
 
 # Example Usage
 if __name__ == "__main__":
-    from PIL import Image
-    import numpy as np
-
-    # Create a dummy image for testing
-    dummy_image = Image.fromarray(
-        np.random.randint(0, 255, (64, 64, 3), dtype=np.uint8)
-    )
-
-    # Example state and task
-    context = {
-        "step": 5,
-        "agent": {"pos": (3, 7), "room": "K", "dir": 3, "carrying": None},
-        "objects": [
-            {
-                "name": "recycling bin",
-                "type": "Storage",
-                "pos": (12, 10),
-                "room": "D",
-                "state": "closed",
-                "action": "pedal",
-                "invisible": None,
-                "contains": [],
-            },
-            {
-                "name": "compost bin",
-                "type": "Storage",
-                "pos": (11, 1),
-                "room": "L",
-                "state": "open",
-                "action": "grasp",
-                "invisible": None,
-                "contains": [],
-            },
-            {
-                "name": "fruit",
-                "type": "Pickable",
-                "pos": (12, 2),
-                "room": "L",
-                "state": None,
-                "action": None,
-                "invisible": False,
-                "contains": None,
-            },
-            {
-                "name": "papers",
-                "type": "Pickable",
-                "pos": (3, 10),
-                "room": "K",
-                "state": None,
-                "action": None,
-                "invisible": False,
-                "contains": None,
-            },
-            {
-                "name": "plates",
-                "type": "Pickable",
-                "pos": (9, 1),
-                "room": "L",
-                "state": None,
-                "action": None,
-                "invisible": True,
-                "contains": None,
-            },
-            {
-                "name": "bottle",
-                "type": "Pickable",
-                "pos": (10, 8),
-                "room": "D",
-                "state": None,
-                "action": None,
-                "invisible": True,
-                "contains": None,
-            },
-        ],
-        "front_obj": None,
-        "unsafe": {"name": None, "poss": {}, "end": -1},
-    }
-    state = (dummy_image, context)
-    task = "move the fruit to the dining room"
+    state, task = get_dummy_state()
 
     # Initialize the helper and query the LLM
-    llm_helper = GPT4Helper(model="gpt-4o-mini")
+    gpt_agent = GPT4Helper(model="gpt-4o-mini")
 
-    # Test query_llm
-    hint, confidence = llm_helper.query_llm(state, task)
-    print(f"Hint: {hint}")
-    print(f"Confidence: {confidence:.4f}")
-
-    # Test query_action
-    action, action_confidence = llm_helper.query_action(state, task)
-    print(f"Action: {llm_helper.action_space[action]}")
+    # Test query_actio
+    action, action_confidence = gpt_agent.query_action(state, task)
+    print(f"Action: {gpt_agent.action_space[action]}")
     print(f"Action Confidence: {action_confidence:.4f}")
