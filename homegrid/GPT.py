@@ -7,6 +7,7 @@ from openai import OpenAI
 from sentence_transformers import SentenceTransformer, util
 import torch
 from PIL import Image
+from homegrid.utils import format_prompt
 
 
 class GPT4Helper:
@@ -152,19 +153,18 @@ Now, determine the best next action.
 
         return action, confidence
 
-    def query_llm(self, state, task):
+    def query_llm(self, task, obs, info):
         """
         Query GPT to provide a hint based on the full state and task, including token log probabilities.
         Args:
-            state: Tuple of (observation, context) where observation is a PIL image
-                  and context is the symbolic state
+            state: Tuple of (observation, context) where observation is a PIL image and context is the symbolic state
             task: The task description as a string.
         Returns:
             hint: The LLM's generated hint
             confidence: Confidence score for the generated hint
         """
-        observation, context = state
-        state_str = jsonpickle.encode(context)
+        observation = Image.fromarray(obs["image"])
+        prompt = format_prompt(task, info)
 
         # Convert PIL image to base64 for API
         import base64
@@ -192,13 +192,7 @@ Now, determine the best next action.
                     },
                     {
                         "type": "text",
-                        "text": f"""The agent is in the following symbolic state:
-{state_str}
-
-The task is:
-{task}
-
-Based on the image observation and symbolic state, provide the most helpful hint for the agent. Your hint should be concise and actionable.""",
+                        "text": prompt,
                     },
                 ],
             },

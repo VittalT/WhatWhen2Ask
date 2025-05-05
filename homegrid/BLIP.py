@@ -10,6 +10,7 @@ import json
 from sentence_transformers import SentenceTransformer, util
 from pprint import pprint
 import os
+from homegrid.utils import format_prompt
 
 # Add this after the imports
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -118,7 +119,7 @@ Think through the task and output the action the robot should take next."""
 
         # ### INPUT FORMAT ###
         # You will receive:
-        # - An image showing the robot’s partial observation of the environment at the current time step.
+        # - An image showing the robot's partial observation of the environment at the current time step.
         # - A symbolic description of the environment, including the robot's location, any object it is holding, and the visible objects.
 
         # ### OUTPUT FORMAT ###
@@ -161,21 +162,6 @@ Think through the task and output the action the robot should take next."""
         )
         print(generated_text)
 
-        # Compute the token-level entropy (uncertainty) and average them.
-        logits = torch.stack(outputs.scores, dim=0)
-        probs = torch.softmax(logits, dim=-1)
-        log_probs = torch.log(probs + 1e-9)
-        token_entropies = -torch.sum(probs * log_probs, dim=-1)[:, 0]
-        avg_entropy = (
-            token_entropies.mean().item() if token_entropies.numel() > 0 else 0.0
-        )
-
-        # Normalize
-        vocab_size = probs.shape[-1]
-        max_entropy = torch.log(torch.tensor(vocab_size, dtype=torch.float32))
-        uncertainty = avg_entropy / max_entropy.item()
-        print(uncertainty)
-
         logits = torch.stack(
             outputs.scores, dim=0
         )  # (num_tokens, batch_size, vocab_size)
@@ -193,7 +179,7 @@ Think through the task and output the action the robot should take next."""
 
         return action, confidence
 
-    def query_llm(self, pil_image, context_str):
+    def query_llm(self, task, obs, info):
         """
         Query the LLM using a PIL image and a context string.
 
@@ -203,30 +189,13 @@ Think through the task and output the action the robot should take next."""
 
         Returns:
             hint (str): The generated text output.
-            uncertainty (float): The average token-level entropy computed from the generated token scores, serving as a measure of uncertainty.
+            confidence (float): The average probability of the top token at each position.
         """
-        # Prepare inputs using the image and context string.
-        prompt_text = f"""
-        You are assisting a reinforcement learning agent navigating a grid-based house to complete tasks by interacting with objects.
+        observation = Image.fromarray(obs["image"])
+        prompt = format_prompt(task, info)
 
-        The agent uses a DQN that takes in its visual observation, state context, and your hint to decide which action to take. Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
-
-        Current state:
-        {context_str}
-
-        You are also provided with the agent’s current visual observation.
-
-        Do not repeat the task or any obvious information already present in the context — the agent already has this.
-
-        Instead, analyze the image and state to infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to move, where an object is located, or what action might be effective.
-
-        Provide one concise, specific, and actionable hint that can help the agent over the next several steps.
-        """
-
-        # pil_image.show()
-        # print(prompt_text)
-
-        inputs = self.processor(images=pil_image, text=prompt_text, return_tensors="pt")
+        inputs = self.processor(images=observation, text=prompt, return_tensors="pt")
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
         # Generate outputs with token scores (logits) needed to compute uncertainties.
         outputs = self.model.generate(
@@ -240,19 +209,16 @@ Think through the task and output the action the robot should take next."""
         generated_ids = outputs.sequences[0]
         hint = self.processor.tokenizer.decode(generated_ids, skip_special_tokens=True)
 
-        # Compute the token-level entropy (uncertainty) and average them.
-        entropies = []
-        for token_logits in outputs.scores:
-            probs = torch.softmax(token_logits, dim=-1)
-            log_probs = torch.log(probs + 1e-9)  # Add epsilon to avoid log(0)
-            token_entropy = -torch.sum(
-                probs * log_probs, dim=-1
-            )  # shape: (batch_size,)
-            entropies.append(token_entropy[0].item())
+        # Calculate confidence (top token probabilities mean)
+        logits = torch.stack(
+            outputs.scores, dim=0
+        )  # (num_tokens, batch_size, vocab_size)
+        probs = torch.softmax(logits, dim=-1)
+        top_token_probs = torch.max(probs[:, 0, :], dim=-1).values  # (num_tokens,)
+        confidence = top_token_probs.mean().item()
 
-        avg_entropy = sum(entropies) / len(entropies) if entropies else 0.0
-
-        return hint, avg_entropy
+        # Return the hint and confidence (not the entropy)
+        return hint, confidence
 
 
 def main():
@@ -276,11 +242,11 @@ def main():
 
     # Initialize BLIP2Helper and query the LLM.
     helper = BLIP2Helper()
-    hint, uncertainty = helper.query_llm(pil_image, context_str)
+    hint, confidence = helper.query_llm(pil_image, context_str)
 
     # Print the results.
     print("Generated Hint:", hint)
-    print("Uncertainty:", uncertainty)
+    print("Confidence:", confidence)
 
 
 if __name__ == "__main__":

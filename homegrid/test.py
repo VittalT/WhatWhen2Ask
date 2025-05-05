@@ -712,9 +712,6 @@ if torch.cuda.is_available():
 num_workers = min(
     8, multiprocessing.cpu_count()
 )  # Use up to 8 worker threads for data loading
-batch_size_multiplier = (
-    2 if torch.cuda.is_available() else 1
-)  # Increase batch size on GPU
 
 # Generate timestamp for file naming
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")

@@ -8,6 +8,7 @@ import os
 import json
 from PIL import Image
 from datetime import datetime
+from homegrid.utils import format_symbolic_state
 
 
 class LLMAgent:
@@ -39,37 +40,11 @@ class LLMAgent:
         else:
             self.llm = GPT4Helper(model=model_name)
 
-    def format_symbolic_state(self, symbolic_state):
-        dir_map = {0: "right", 1: "down", 2: "left", 3: "up"}
-        room_map = {"L": "living room", "D": "dining room", "K": "kitchen"}
-
-        agent = symbolic_state["agent"]
-        agent_pos = tuple(int(x) for x in agent["pos"])
-        agent_dir = dir_map[agent["dir"]]
-        carrying = agent["carrying"] if agent["carrying"] is not None else "nothing"
-        agent_room = room_map[agent["room"]]
-
-        description = f"The agent is in the {agent_room} at location {agent_pos}, facing {agent_dir}, carrying {carrying}.\n"
-        description += "The objects in the house are:\n"
-
-        for obj in symbolic_state["objects"]:
-            if not obj["invisible"]:
-                name = obj["name"]
-                room = room_map[obj["room"]]
-                pos = tuple(int(x) for x in obj["pos"])
-                state = obj["state"]
-                state_text = f" in state {state}" if state else ""
-                description += (
-                    f"- a {name} in the {room} at location {pos}{state_text}.\n"
-                )
-
-        return description.strip()
-
     def encode_state(self, obs, info):
         """Convert observations and info into format for LLM query"""
         observation = Image.fromarray(obs["image"])
         # observation.show()
-        context = self.format_symbolic_state(info["symbolic_state"])
+        context = format_symbolic_state(info["symbolic_state"])
 
         return observation, context
 
@@ -250,10 +225,8 @@ class LLMAgent:
         task_success_rates = {}
 
         for episode in range(episodes):
-            obs, info = self.env.reset()
-
             # Reset episode-specific variables and parse objectives
-            self.reset(obs, info)
+            obs, info = self.reset()
 
             # Track current task
             current_task = self.env.task
@@ -382,6 +355,7 @@ class LLMAgent:
 if __name__ == "__main__":
     # Initialize the Simulator
     sim = LLMAgent(
+        model_name="gpt-4o",
         env_name="homegrid-task",
         episodes=5,  # Just 5 test episodes to start
         checkpoint_dir="checkpoints15",  # or any directory you want
