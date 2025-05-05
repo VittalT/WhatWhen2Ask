@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from homegrid.BLIP import BLIP2Helper
+from homegrid.GPT import GPT4Helper
 from pprint import pprint
 import matplotlib.pyplot as plt
 import os
@@ -160,7 +161,7 @@ class DQNAgent:
         self.alpha = 0.0001  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 128  # Larger batch size for better gradient estimates
+        self.batch_size = 64  # Larger batch size for better gradient estimates
         self.episodes = episodes
         self.epsilon_decay = 0.9975  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.01  # Higher minimum exploration rate
@@ -225,7 +226,8 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
         # Initialize LLMHelper
-        self.llm_helper = None
+        self.o_llm_helper = BLIP2Helper()
+        self.c_llm_helper = GPT4Helper()
         self.hint_threshold = 0.95
 
         # Checkpoint interval
@@ -827,14 +829,15 @@ class DQNAgent:
         if (
             uncertainty > self.hint_threshold
             and self.num_llm_calls < self.max_llm_calls
-            and not testing
         ):
             cost = self.llm_cost * (2**self.num_llm_calls)
             # Generate hint using LLM
             if self.llm_helper is not None:
-                hint, _ = self.llm_helper.query_llm(obs["image"], info)
+                hint, confidence = self.o_llm_helper.query_llm(self.env.task, obs, info)
                 self.num_llm_calls += 1
-                print(f"Task: {self.env.task}\nHint: {hint}")
+                print(
+                    f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
+                )
                 self.current_hint = hint
                 # Reprocess state with new hint
                 self.update_state(obs, info)
@@ -948,19 +951,19 @@ class DQNAgent:
                 and len(self.recent_cells) >= 2
                 and tuple(self.recent_cells[-1]) == tuple(self.recent_cells[-2])
             ):
-                pot_blocked = -1  # Negative value for hitting a wall
+                pot_blocked = 1  # Hitting a wall
 
             # Penalty case 2: If the action is a non-movement action but there's no object in front
             if action not in move_actions and front_obj is None:
-                pot_blocked = -1  # Same penalty for wasted actions
+                pot_blocked = 1  # Same penalty for wasted actions
 
         # Calculate weighted components
         weighted_dist = -0.05 * pot_dist  # negative because closer is better
-        weighted_orientation = 0.2 * pot_orientation
-        weighted_carrying = 1.0 * pot_carrying
-        weighted_expl = 0.01 * pot_expl
-        weighted_time = -0.00 * pot_time  # penalize as time goes
-        weighted_blocked = 0.1 * pot_blocked  # Apply weight to blocked move penalty
+        weighted_orientation = 0.02 * pot_orientation
+        weighted_carrying = 0.25 * pot_carrying
+        weighted_expl = 0.02 * pot_expl
+        weighted_time = -0.001 * pot_time  # penalize as time goes
+        weighted_blocked = -0.1 * pot_blocked  # Apply weight to blocked move penalty
 
         # Store components for visualization
         self.potential_components = {
@@ -1449,8 +1452,6 @@ class DQNAgent:
                 action, cost = self.choose_action(obs, info, testing=True)
                 obs, reward, terminated, truncated, info = self.env.step(action)
                 self.update_state(obs, info, action)
-
-                self.total_steps += 1
 
                 # Get shaped reward for tracking
                 shaped_reward, original_reward = self.shaped_reward(reward, info)
