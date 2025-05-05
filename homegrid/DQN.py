@@ -19,8 +19,13 @@ import time
 from sentence_transformers import SentenceTransformer
 
 # Define embedding dimensions
-TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
-HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
+SENTENCE_TRANSFORMER_DIM = 384
+TASK_EMBED_DIM = (
+    SENTENCE_TRANSFORMER_DIM + 10
+)  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding
+HINT_EMBED_DIM = (
+    SENTENCE_TRANSFORMER_DIM + 1 + 10
+)  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
 USE_LLMS = False
 
@@ -38,8 +43,8 @@ class DQN(nn.Module):
     def __init__(
         self,
         num_actions,
-        task_embed_dim=384,
-        hint_embed_dim=385,
+        task_embed_dim=TASK_EMBED_DIM,
+        hint_embed_dim=HINT_EMBED_DIM,
     ):
         super().__init__()
 
@@ -182,6 +187,19 @@ class DQNAgent:
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
         self.height = 10  # bit less than env.height
+
+        self.channel_map = {
+            "bottle": 0,
+            "fruit": 1,
+            "papers": 2,
+            "plates": 3,
+            "trash bin": 4,
+            "recycling bin": 6,
+            "compost bin": 8,
+            "dining room": 5,
+            "living room": 7,
+            "kitchen": 9,
+        }
 
         # Initialize global map with padding
         self.global_map = torch.zeros(12, self.height + 2, self.width + 2).to(
@@ -347,7 +365,9 @@ class DQNAgent:
         # Handle empty text
         if not text or text == "none" or text == "":
             # Return zeros for empty text
-            return torch.zeros(TASK_EMBED_DIM, dtype=torch.float32, device=self.device)
+            return torch.zeros(
+                SENTENCE_TRANSFORMER_DIM, dtype=torch.float32, device=self.device
+            )
 
         # Get embedding and move to the appropriate device
         embedding = self.sentence_model.encode(text, convert_to_tensor=True)
@@ -357,9 +377,21 @@ class DQNAgent:
         """
         Convert a string to a sentence embedding using all-MiniLM-L6-v2 and move to device.
         For hints, adds an additional flag dimension.
+        For both task and hint, adds a multihot encoding of objects present.
         """
         # Get the base embedding
         embedding = self.get_sentence_embedding(text)
+
+        # Create a multihot encoding of objects mentioned in the text
+        object_multihot = torch.zeros(10, dtype=torch.float32, device=self.device)
+        if text:
+            for name in self.channel_map.keys():
+                if name in text:
+                    channel = self.object_to_channel(name)
+                    object_multihot[channel] = 1.0
+
+        # Concatenate the embedding with the object multihot encoding
+        embedding = torch.cat([embedding, object_multihot])
 
         # For hints, add an extra dimension for the flag
         if is_hint:
@@ -377,20 +409,11 @@ class DQNAgent:
             obj_name = obj
         else:
             obj_name = obj["name"]
-        channel_map = {
-            "bottle": 0,
-            "fruit": 1,
-            "papers": 2,
-            "plates": 3,
-            "trash bin": 4,
-            "recycling bin": 6,
-            "compost bin": 8,
-        }
 
-        channel = channel_map[obj_name]
+        channel = self.channel_map[obj_name]
         # Add state offset for bins (open/closed)
-        if "bin" in obj_name and obj["state"] == "closed":
-            channel += 1  # Use next channel for closed state
+        if "bin" in obj_name and not isinstance(obj, str) and obj["state"] == "open":
+            channel += 1  # Use next channel for open state
         return channel
 
     def encode_state(self, obs, info):
@@ -707,7 +730,7 @@ class DQNAgent:
         ), f"Agent state shape mismatch: {agent_state.shape}"
 
         # Context: (batch_size, task_embed_dim + hint_embed_dim)
-        expected_context_dim = 384 + 385  # task_embed_dim + hint_embed_dim
+        expected_context_dim = TASK_EMBED_DIM + HINT_EMBED_DIM  # Use the constants
         print(
             f"Context: {tuple(context.shape)} (Expected: [1, {expected_context_dim}])"
         )
@@ -1587,14 +1610,15 @@ if __name__ == "__main__":
     agent = DQNAgent(
         env_name="homegrid-task",
         episodes=5,  # Just 5 test episodes to start
-        checkpoint_dir="checkpoints15",  # or any directory you want
+        checkpoint_dir="checkpoints61",  # or any directory you want
     )
 
     # Reset environment and agent state
     obs, info = agent.reset()
     print(agent.choose_action(obs, info, testing=True))
-    print(agent.open_llm.query_llm(agent.env.task, obs, info))
-    print(agent.closed_llm.query_llm(agent.env.task, obs, info))
+    if USE_LLMS:
+        print(agent.open_llm.query_llm(agent.env.task, obs, info))
+        print(agent.closed_llm.query_llm(agent.env.task, obs, info))
 
     # Run shape checks to validate tensor dimensions
     try:
