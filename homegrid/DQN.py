@@ -228,10 +228,16 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.alpha)
         self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
-        # Initialize LLMHelper
+        # Initialize LLMHelpers
+        global _open_llm_helper, _closed_llm_helper
         if USE_LLMS:
-            self.open_llm = BLIP2Helper()
-            self.closed_llm = GPT4Helper()
+            if _open_llm_helper is None:
+                _open_llm_helper = BLIP2Helper()
+            if _closed_llm_helper is None:
+                _closed_llm_helper = GPT4Helper()
+            self.open_llm = _open_llm_helper
+            self.closed_llm = _closed_llm_helper
+
         self.dqn_threshold = 0.8
         self.open_threshold = 0.5
         self.closed_threshold = 0.5
