@@ -158,7 +158,7 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.alpha = 0.0005  # Lower learning rate for more stable learning
+        self.alpha = 0.001  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
         self.batch_size = 128  # Larger batch size for better gradient estimates
