@@ -48,7 +48,7 @@ class AgentSimulator:
 
         # Limit GPU memory usage to approximately 45% of allocation
         if torch.cuda.is_available():
-            torch.cuda.set_per_process_memory_fraction(0.45)
+            torch.cuda.set_per_process_memory_fraction(0.85)
 
         self.agent = self.load_agent(model_path)
         self.rate = rate

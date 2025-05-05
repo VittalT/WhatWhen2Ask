@@ -162,7 +162,7 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.alpha = 0.001  # Lower learning rate for more stable learning
+        self.alpha = 0.0005  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
@@ -827,7 +827,7 @@ class DQNAgent:
 
         # Calculate uncertainty using pre-computed Q-values
         dqn_confidence = self.confidence_score(q_values)
-        print(f"DQN Confidence: {dqn_confidence:.4f}")
+        # print(f"DQN Confidence: {dqn_confidence:.4f}")
 
         # Check if we should use LLM hints
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
@@ -838,9 +838,9 @@ class DQNAgent:
             if can_query_open:
                 # Generate hint using LLM
                 hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
-                print(
-                    f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.episode}\nHint: {hint}\nConfidence: {confidence:.4f}"
-                )
+                # print(
+                #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
+                # )
                 self.current_hint = hint
                 self.last_open = self.current_step
                 self.open_llm_cost *= 2

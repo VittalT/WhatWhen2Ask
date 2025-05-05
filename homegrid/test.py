@@ -703,7 +703,7 @@ if torch.cuda.is_available():
     # Get total GPU memory
     total_mem = torch.cuda.get_device_properties(0).total_memory
     # Set to use only 45% of available memory
-    torch.cuda.set_per_process_memory_fraction(0.45)
+    torch.cuda.set_per_process_memory_fraction(0.85)
     print(f"Limiting GPU memory usage to 45% of {total_mem/1e9:.2f} GB")
 
 # GPU optimization parameters

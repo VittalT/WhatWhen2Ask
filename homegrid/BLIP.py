@@ -189,8 +189,8 @@ Think through the task and output the action the robot should take next."""
         """
         observation = Image.fromarray(obs["image"])
         prompt = format_prompt(task, info)
-        observation.show()
-        print(prompt)
+        # observation.show()
+        # print(prompt)
 
         inputs = self.processor(images=observation, text=prompt, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
