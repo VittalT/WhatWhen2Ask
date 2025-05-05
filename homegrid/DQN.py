@@ -168,7 +168,7 @@ class DQNAgent:
         self.alpha = 5e-4  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 32  # Larger batch size for better gradient estimates
+        self.batch_size = 16
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
@@ -176,6 +176,8 @@ class DQNAgent:
         self.closed_llm_cost = 0.00  # todo
         self.current_hint = ""
         self.agent_view_size = 3
+        self.train_start = 500
+        self.train_every = 8
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
@@ -1259,8 +1261,11 @@ class DQNAgent:
                 total_reward += shaped_reward
                 original_reward_sum += original_reward
 
-                # Train less frequently to speed up training (every 4 steps)
-                if self.total_steps % 4 == 0:
+                # Train less frequently to speed up training
+                if (
+                    self.total_steps % self.train_every == 0
+                    and len(self.replay_buffer["experiences"]) >= self.train_start
+                ):
                     loss_val = self.train_step()
                     if loss_val is not None:
                         episode_loss += loss_val
