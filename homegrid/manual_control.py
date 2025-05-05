@@ -41,7 +41,7 @@ print(f"Using device: {device}")
 
 # Limit GPU memory usage if available
 if torch.cuda.is_available():
-    torch.cuda.set_per_process_memory_fraction(0.45)
+    torch.cuda.set_per_process_memory_fraction(0.85)
 
 
 def create_reward_visualization():
