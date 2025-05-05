@@ -161,10 +161,10 @@ class DQNAgent:
         self.alpha = 0.0001  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 64  # Larger batch size for better gradient estimates
+        self.batch_size = 128  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0.9975  # Slower decay helps explore more thoroughly
-        self.epsilon_min = 0.01  # Higher minimum exploration rate
+        self.epsilon_decay = 0.999  # Slower decay helps explore more thoroughly
+        self.epsilon_min = 0.05  # Higher minimum exploration rate
         self.llm_cost = 0.01
         self.num_llm_calls = 0
         self.max_llm_calls = 0  # Disable LLM queries for pure DQN training
@@ -191,7 +191,7 @@ class DQNAgent:
         self.total_steps = 0
 
         # Memory parameters - use a single replay buffer
-        self.max_replay_buffer_size = 100_000  # Replay buffer capacity
+        self.max_replay_buffer_size = 50_000  # Replay buffer capacity
         self.replay_buffer = {
             "experiences": deque(maxlen=self.max_replay_buffer_size),
             "priorities": deque(maxlen=self.max_replay_buffer_size),
@@ -199,9 +199,9 @@ class DQNAgent:
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
-        self.per_alpha = 0.6
-        self.per_beta = 0.4
-        self.per_beta_increment = 0.001
+        self.per_alpha = 0.4
+        self.per_beta = 0.6
+        self.per_beta_increment = 0.0002
         self.per_epsilon = 0.01
 
         # Number of actions from environment
