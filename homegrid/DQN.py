@@ -22,7 +22,7 @@ from sentence_transformers import SentenceTransformer
 TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
 HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
