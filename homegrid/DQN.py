@@ -163,7 +163,7 @@ class DQNAgent:
         self.alpha = 0.001  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 128  # Larger batch size for better gradient estimates
+        self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
         self.epsilon_decay = 0.999  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
