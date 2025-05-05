@@ -41,8 +41,8 @@ class MultitaskWrapper(gym.Wrapper):
         task_type = seeded_random().choice(self.tasks)
 
         if task_type == MultitaskWrapper.Tasks.find:
-            obj_name = seeded_random().choice(self.env.objs).name
-            # obj_name = seeded_random(fixed=False).choice(self.env.objs[:2]).name
+            # obj_name = seeded_random().choice(self.env.objs).name
+            obj_name = seeded_random(fixed=False).choice(self.env.objs[:2]).name
             task = f"find the {obj_name}"
 
             def reward_fn(symbolic_state):

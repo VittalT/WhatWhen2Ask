@@ -168,16 +168,16 @@ class DQNAgent:
         self.alpha = 5e-4  # Lower learning rate for more stable learning
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 16
+        self.batch_size = 32
         self.episodes = episodes
         self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
         self.open_llm_cost = 0.00  # todo
         self.closed_llm_cost = 0.00  # todo
         self.current_hint = ""
-        self.agent_view_size = 3
+        self.agent_view_size = 23
         self.train_start = 500
-        self.train_every = 8
+        self.train_every = 4
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
