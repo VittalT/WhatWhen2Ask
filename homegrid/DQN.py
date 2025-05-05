@@ -165,11 +165,9 @@ class DQNAgent:
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
+        self.epsilon_decay = 0.99  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
-        self.llm_cost = 0.01
-        self.num_llm_calls = 0
-        self.max_llm_calls = 0  # Disable LLM queries for pure DQN training
+        self.llm_cost = 0.00
         self.current_hint = ""
         self.agent_view_size = 21
 
@@ -228,8 +226,8 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
         # Initialize LLMHelper
-        self.o_llm_helper = None  # BLIP2Helper()
-        self.c_llm_helper = None  # GPT4Helper()
+        self.open_llm = BLIP2Helper()
+        self.closed_llm = GPT4Helper()
         self.hint_threshold = 0.95
 
         # Checkpoint interval
@@ -254,16 +252,7 @@ class DQNAgent:
             "device": str(self.device),
         }
 
-        # Initialize state tracking
-        self.visited_cells = set()
-        self.recent_cells = deque(maxlen=10)  # Track last 10 visited cells
-        self.recent_actions = deque(maxlen=5)  # Track last 5 actions
-        self.visited_rooms = set()
-
-        # For potential-based reward shaping
-        self.previous_potential = None
-        self.objectives = []
-        self.potential_components = {}
+        self.reset()
 
     def reset(self):
         # Reset environment
@@ -291,13 +280,18 @@ class DQNAgent:
         self.recent_cells = deque(maxlen=10)
         self.recent_actions = deque(maxlen=5)
         self.visited_rooms = set()
-        self.previous_potential = None
 
         # Reset LLM-related variables
         self.num_llm_calls = 0
         self.current_hint = ""
+        self.open_cooldown = 20
+        self.closed_cooldown = 40
+        self.last_open = -100
+        self.last_closed = -100
 
         # Parse objectives if needed
+        self.previous_potential = None
+        self.potential_components = {}
         self.objectives = self._find_matching_objects(info)
 
         self.update_state(obs, info)
@@ -828,25 +822,24 @@ class DQNAgent:
         uncertainty = self.uncertainty_score(q_values)
 
         # Check if we should use LLM hints
-        if (
-            uncertainty > self.hint_threshold
-            and self.num_llm_calls < self.max_llm_calls
-        ):
-            cost = self.llm_cost * (2**self.num_llm_calls)
-            # Generate hint using LLM
-            if self.llm_helper is not None:
-                hint, confidence = self.o_llm_helper.query_llm(self.env.task, obs, info)
-                self.num_llm_calls += 1
-                print(
-                    f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
-                )
-                self.current_hint = hint
-                # Reprocess state with new hint
-                self.update_state(obs, info)
+        if uncertainty > self.hint_threshold:
+            can_query_open = self.num_llm_calls < self.max_llm_calls
+            if self.num_llm_calls < self.max_llm_calls:
+                cost = self.llm_cost * (2**self.num_llm_calls)
+                # Generate hint using LLM
+                if self.llm_helper is not None:
+                    hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
+                    self.num_llm_calls += 1
+                    print(
+                        f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
+                    )
+                    self.current_hint = hint
+                    # Reprocess state with new hint
+                    self.update_state(obs, info)
 
-                # Get new Q-values with the updated hint
-                with torch.no_grad():
-                    q_values = self.model(*self.state)
+                    # Get new Q-values with the updated hint
+                    with torch.no_grad():
+                        q_values = self.model(*self.state)
 
         # Greedy action selection using pre-computed q_values
         action = torch.argmax(q_values, dim=1).item()
@@ -1575,8 +1568,8 @@ if __name__ == "__main__":
     # Reset environment and agent state
     obs, info = agent.reset()
     print(agent.choose_action(obs, info, testing=True))
-    print(agent.o_llm_helper.query_llm(agent.env.task, obs, info))
-    print(agent.c_llm_helper.query_llm(agent.env.task, obs, info))
+    print(agent.open_llm.query_llm(agent.env.task, obs, info))
+    print(agent.closed_llm.query_llm(agent.env.task, obs, info))
 
     # Run shape checks to validate tensor dimensions
     try:

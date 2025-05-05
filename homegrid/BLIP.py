@@ -189,6 +189,8 @@ Think through the task and output the action the robot should take next."""
         """
         observation = Image.fromarray(obs["image"])
         prompt = format_prompt(task, info)
+        # observation.show()
+        # print(prompt)
 
         inputs = self.processor(images=observation, text=prompt, return_tensors="pt")
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
@@ -196,7 +198,7 @@ Think through the task and output the action the robot should take next."""
         # Generate outputs with token scores (logits) needed to compute uncertainties.
         outputs = self.model.generate(
             **inputs,
-            max_new_tokens=50,
+            max_new_tokens=100,
             output_scores=True,
             return_dict_in_generate=True,
         )

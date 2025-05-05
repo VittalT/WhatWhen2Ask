@@ -222,7 +222,7 @@ Now, determine the best next action.
 
         # Convert log probabilities to raw probabilities
         token_probabilities = np.exp(token_logprobs)
-        confidence = np.mean(token_probabilities)
+        confidence = np.mean(token_probabilities).item()
 
         return hint, confidence
 
