@@ -699,7 +699,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # Limit num threads
-torch.set_num_threads(1)
+torch.set_num_threads(2)
 # Limit GPU memory usage to approximately 45% of allocation
 if torch.cuda.is_available():
     # Get total GPU memory
@@ -717,7 +717,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints37"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints38"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
