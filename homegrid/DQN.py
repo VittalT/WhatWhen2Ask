@@ -22,6 +22,8 @@ from sentence_transformers import SentenceTransformer
 TASK_EMBED_DIM = 384  # all-MiniLM-L6-v2 embedding dimension
 HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
+USE_LLMS = True
+
 
 def visualize_image(image):
     plt.imshow(image)  # expects (H, W, 3) in RGB
@@ -165,9 +167,10 @@ class DQNAgent:
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0.9  # Slower decay helps explore more thoroughly
+        self.epsilon_decay = 0.995  # Slower decay helps explore more thoroughly
         self.epsilon_min = 0.05  # Higher minimum exploration rate
-        self.llm_cost = 0.00
+        self.open_llm_cost = 0.00  # todo
+        self.closed_llm_cost = 0.00  # todo
         self.current_hint = ""
         self.agent_view_size = 21
 
@@ -226,9 +229,12 @@ class DQNAgent:
         self.loss_fn = nn.MSELoss(reduction="none")  # For prioritized replay
 
         # Initialize LLMHelper
-        self.open_llm = BLIP2Helper()
-        self.closed_llm = GPT4Helper()
-        self.hint_threshold = 0.95
+        if USE_LLMS:
+            self.open_llm = BLIP2Helper()
+            self.closed_llm = GPT4Helper()
+        self.dqn_threshold = 0.8
+        self.open_threshold = 0.5
+        self.closed_threshold = 0.5
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -284,10 +290,10 @@ class DQNAgent:
         # Reset LLM-related variables
         self.num_llm_calls = 0
         self.current_hint = ""
-        self.open_cooldown = 20
-        self.closed_cooldown = 40
-        self.last_open = -100
-        self.last_closed = -100
+        self.open_cooldown = 150
+        self.closed_cooldown = 4000
+        self.last_open = -200
+        self.last_closed = -200
 
         # Parse objectives if needed
         self.previous_potential = None
@@ -632,7 +638,7 @@ class DQNAgent:
             recent_actions_tensor,
         )
 
-    def uncertainty_score(self, q_values=None):
+    def confidence_score(self, q_values=None):
         """
         Compute uncertainty based on the entropy of the softmax over Q-values.
 
@@ -648,19 +654,20 @@ class DQNAgent:
         with torch.no_grad():
             # Apply softmax with numerical stability
             q_values = q_values.squeeze(0)
+            # print(f"Q-values: {q_values}")
             q_values = q_values - torch.max(q_values)
-            probabilities = torch.softmax(q_values, dim=0)
+            # print(f"Q-values after max: {q_values}")
+            # T = torch.std(q_values).item() + 1e-8
+            # print(f"T: {T}")
+            T = 0.1
+            # probabilities = torch.softmax(q_values, dim=0)
+            # print(f"Probabilities: {probabilities}")
+            probabilities = torch.softmax(q_values / T, dim=0)
+            # print(f"Probabilities: {probabilities}")
 
-            # Calculate entropy: -sum(p * log(p))
-            entropy = -torch.sum(probabilities * torch.log(probabilities + 1e-9))
-            max_entropy = torch.log(
-                torch.tensor(float(len(q_values)), device=self.device)
-            )
+            confidence = probabilities.max().cpu().item()
 
-            # Normalize and explicitly move to CPU before computing result
-            result = (entropy / max_entropy).cpu().item()
-
-        return result
+        return confidence
 
     def check_state_shapes(self, state):
         """
@@ -819,27 +826,31 @@ class DQNAgent:
             q_values = self.model(*self.state)
 
         # Calculate uncertainty using pre-computed Q-values
-        uncertainty = self.uncertainty_score(q_values)
+        dqn_confidence = self.confidence_score(q_values)
+        print(f"DQN Confidence: {dqn_confidence:.4f}")
 
         # Check if we should use LLM hints
-        # if uncertainty > self.hint_threshold:
-        #     can_query_open = self.num_llm_calls < self.max_llm_calls
-        #     if self.num_llm_calls < self.max_llm_calls:
-        #         cost = self.llm_cost * (2**self.num_llm_calls)
-        #         # Generate hint using LLM
-        #         if self.llm_helper is not None:
-        #             hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
-        #             self.num_llm_calls += 1
-        #             print(
-        #                 f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
-        #             )
-        #             self.current_hint = hint
-        #             # Reprocess state with new hint
-        #             self.update_state(obs, info)
+        if USE_LLMS and dqn_confidence < self.dqn_threshold:
+            can_query_open = self.current_step - self.last_open >= self.open_cooldown
+            can_query_closed = (
+                self.current_step - self.last_closed >= self.closed_cooldown
+            )
+            if can_query_open:
+                # Generate hint using LLM
+                hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
+                print(
+                    f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.episode}\nHint: {hint}\nConfidence: {confidence:.4f}"
+                )
+                self.current_hint = hint
+                self.last_open = self.current_step
+                self.open_llm_cost *= 2
+                cost = self.open_llm_cost
 
-        #             # Get new Q-values with the updated hint
-        #             with torch.no_grad():
-        #                 q_values = self.model(*self.state)
+                # Reprocess state with new hint
+                self.update_state(obs, info)
+                # Get new Q-values with the updated hint
+                with torch.no_grad():
+                    q_values = self.model(*self.state)
 
         # Greedy action selection using pre-computed q_values
         action = torch.argmax(q_values, dim=1).item()

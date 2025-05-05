@@ -39,16 +39,17 @@ def format_prompt(task, info):
 You are assisting a reinforcement learning agent navigating a grid-based house to complete tasks by interacting with objects.
 The task is to {task}.
 
-The agent uses a DQN that takes in its visual observation, state context, and your hint to decide which action to take. Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
+The agent uses a DQN that takes in a partially observable egocentric view, state context, and your hint to decide which action to take.
+Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
 
-Current state:
+State Context:
 {context}
 
-You are also provided with the agent's current visual observation.
+You are also provided with the global observation, which the agent cannot see.
 
-Do not repeat the task or any obvious information already present in the context — the agent already has this.
+Do not repeat the task, the agent already has this.
 
-Instead, analyze the image and state to infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to move, where an object is located, or what action might be effective.
+Instead, analyze the image and state context to infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to move, where an object is located, or what action might be effective.
 
 Provide one concise, specific, and actionable hint that can help the agent over the next several steps.
 """
