@@ -165,8 +165,8 @@ class DQNAgent:
         self.epsilon = 1.0
         self.batch_size = 32  # Larger batch size for better gradient estimates
         self.episodes = episodes
-        self.epsilon_decay = 0  # Slower decay helps explore more thoroughly
-        self.epsilon_min = 0.0  # Higher minimum exploration rate
+        self.epsilon_decay = 0.9  # Slower decay helps explore more thoroughly
+        self.epsilon_min = 0.05  # Higher minimum exploration rate
         self.llm_cost = 0.00
         self.current_hint = ""
         self.agent_view_size = 21
@@ -822,24 +822,24 @@ class DQNAgent:
         uncertainty = self.uncertainty_score(q_values)
 
         # Check if we should use LLM hints
-        if uncertainty > self.hint_threshold:
-            can_query_open = self.num_llm_calls < self.max_llm_calls
-            if self.num_llm_calls < self.max_llm_calls:
-                cost = self.llm_cost * (2**self.num_llm_calls)
-                # Generate hint using LLM
-                if self.llm_helper is not None:
-                    hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
-                    self.num_llm_calls += 1
-                    print(
-                        f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
-                    )
-                    self.current_hint = hint
-                    # Reprocess state with new hint
-                    self.update_state(obs, info)
+        # if uncertainty > self.hint_threshold:
+        #     can_query_open = self.num_llm_calls < self.max_llm_calls
+        #     if self.num_llm_calls < self.max_llm_calls:
+        #         cost = self.llm_cost * (2**self.num_llm_calls)
+        #         # Generate hint using LLM
+        #         if self.llm_helper is not None:
+        #             hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
+        #             self.num_llm_calls += 1
+        #             print(
+        #                 f"Task: {self.env.task}\nHint: {hint}\nConfidence: {confidence:.4f}"
+        #             )
+        #             self.current_hint = hint
+        #             # Reprocess state with new hint
+        #             self.update_state(obs, info)
 
-                    # Get new Q-values with the updated hint
-                    with torch.no_grad():
-                        q_values = self.model(*self.state)
+        #             # Get new Q-values with the updated hint
+        #             with torch.no_grad():
+        #                 q_values = self.model(*self.state)
 
         # Greedy action selection using pre-computed q_values
         action = torch.argmax(q_values, dim=1).item()
