@@ -175,7 +175,7 @@ class DQNAgent:
         self.open_llm_cost = 0.00  # todo
         self.closed_llm_cost = 0.00  # todo
         self.current_hint = ""
-        self.agent_view_size = 21
+        self.agent_view_size = 3
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
