@@ -715,7 +715,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints47"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints48"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -822,16 +822,16 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=3000,
-        save_interval=100,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=1000,
+    #     save_interval=100,
+    #     use_gpu=True,
+    # )
 
     evaluate_checkpoints(
         checkpoint_range=(
             200,
-            3000,
+            1000,
             200,
         ),
         test_episodes=100,

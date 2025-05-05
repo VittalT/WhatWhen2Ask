@@ -24,6 +24,9 @@ HINT_EMBED_DIM = 385  # all-MiniLM-L6-v2 embedding dimension + 1 for flag
 
 USE_LLMS = True
 
+_open_llm_helper = None
+_closed_llm_helper = None
+
 
 def visualize_image(image):
     plt.imshow(image)  # expects (H, W, 3) in RGB
