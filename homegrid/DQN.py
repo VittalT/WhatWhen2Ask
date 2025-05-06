@@ -263,6 +263,8 @@ class DQNAgent:
         self.dqn_threshold = 0.8
         self.open_threshold = 0.6
         self.closed_threshold = 0.6
+        self.open_cooldown = 20
+        self.closed_cooldown = 4000
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -318,8 +320,6 @@ class DQNAgent:
         # Reset LLM-related variables
         self.num_llm_calls = 0
         self.current_hint = ""
-        self.open_cooldown = 20
-        self.closed_cooldown = 4000
         self.last_open = -200
         self.last_closed = -200
 
@@ -940,12 +940,11 @@ class DQNAgent:
                 # print(
                 #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
                 # )
+                self.last_open = self.current_step
+                self.open_llm_cost *= 2
+                cost = self.open_llm_cost
                 if confidence > self.open_threshold:
                     self.current_hint = hint
-                    self.last_open = self.current_step
-                    self.open_llm_cost *= 2
-                    cost = self.open_llm_cost
-
                     # Reprocess state with new hint
                     self.update_state(obs, info)
                     # Get new Q-values with the updated hint
