@@ -14,7 +14,7 @@ from tokenizers import Tokenizer
 from homegrid.base import Pickable, Storage
 from homegrid.layout import room2name
 
-fixed_task = True
+fixed_task = False
 
 
 # 42, 50, 60
@@ -38,11 +38,11 @@ class MultitaskWrapper(gym.Wrapper):
         self.tasks = list(MultitaskWrapper.Tasks)
 
     def sample_task(self):
-        task_type = seeded_random(fixed=False).choice(self.tasks[:2] + self.tasks[4:])
+        task_type = seeded_random().choice(self.tasks[:2] + self.tasks[4:])
 
         if task_type == MultitaskWrapper.Tasks.find:
             # obj_name = seeded_random().choice(self.env.objs).name
-            obj_name = seeded_random(fixed=False).choice(self.env.objs).name
+            obj_name = seeded_random().choice(self.env.objs).name
             task = f"find the {obj_name}"
 
             def reward_fn(symbolic_state):
@@ -50,7 +50,7 @@ class MultitaskWrapper(gym.Wrapper):
 
         elif task_type == MultitaskWrapper.Tasks.get:
             obj_name = (
-                seeded_random(fixed=False)
+                seeded_random()
                 .choice([ob for ob in self.env.objs if isinstance(ob, Pickable)])
                 .name
             )
@@ -61,7 +61,7 @@ class MultitaskWrapper(gym.Wrapper):
 
         elif task_type == MultitaskWrapper.Tasks.open:
             obj_name = (
-                seeded_random(fixed=False)
+                seeded_random()
                 .choice([ob for ob in self.env.objs if isinstance(ob, Storage)])
                 .name
             )

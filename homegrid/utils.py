@@ -42,6 +42,7 @@ The task is to {task}.
 The agent uses a DQN that takes in a partially observable egocentric view, state context, and your hint to decide which action to take.
 Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
 
+Here is your current state and surroundings. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
 State Context:
 {context}
 
@@ -52,6 +53,34 @@ Do not repeat the task, the agent already has this.
 Instead, analyze the image and state context to infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to move, where an object is located, or what action might be effective.
 
 Provide one concise, specific, and actionable hint that can help the agent over the next several steps.
+"""
+    return prompt_text
+
+
+def format_action_prompt(task, info):
+    context = format_symbolic_state(info["symbolic_state"])
+    prompt_text = f"""
+You are an intelligent robot navigating a grid-based house to complete tasks by interacting with objects.
+The task is to {task}.
+
+Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
+
+### Important Rules:
+- Moving in a direction (left, right, up, down) causes the agent to move one tile in that direction and then face that direction.
+- You can only interact (pickup, drop, get, pedal, grasp, lift) objects if you are facing them.
+- You can only carry one object at a time.
+- There may be obstacles in the way that prevent you from moving in a direction.
+
+Here is your current state and surroundings. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
+### State Context:
+{context}
+
+### Output Format:
+Think step by step to reason through the current situation.
+Then, output the best next action.  
+The first word of your response must be the chosen action (in lowercase), followed by a short explanation (on the next line).
+
+Now, determine the best next action.
 """
     return prompt_text
 

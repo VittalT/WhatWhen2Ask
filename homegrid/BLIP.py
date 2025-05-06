@@ -10,7 +10,7 @@ import json
 from sentence_transformers import SentenceTransformer, util
 from pprint import pprint
 import os
-from homegrid.utils import format_prompt, get_dummy_state, format_symbolic_state
+from homegrid.utils import format_prompt, format_action_prompt, get_dummy_state
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -60,22 +60,8 @@ class BLIP2Helper:
         """
         observation, info = state
         # observation.show()
-        context = format_symbolic_state(info["symbolic_state"])
-        prompt = f"""
-You are an expert planner for a robot in a partially‐observable grid. The robot's task is to {task}.
-Actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
-
-Notes:
-- Holds one object at a time.
-- Bins must be opened before use.
-- Explore to find hidden objects.
-
-INPUT:
-- image: current partial view
-- symbolic_state: {context}
-
-OUTPUT:
-Think through the task and output the action the robot should take next."""
+        prompt = format_action_prompt(task, info)
+        # print(prompt)
         # - If testing, output the action word alone, without quotes, punctuation, or extra text.
         # - Exactly one word from the action list above
         # - No quotes, punctuation or extra text
@@ -105,34 +91,6 @@ Think through the task and output the action the robot should take next."""
         # # Step 4: Insert the truncated context into the full prompt
         # prompt = base_prompt.format(context=truncated_context)
 
-        # prompt = f"""
-        # You are an expert planner tasked with helping an embodied robot perform a task in a grid-based environment. The robot has only a partially observable view of its surroundings, so it must explore the environment as needed to complete the task.
-
-        # The robot can perform the following actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
-
-        # ### Important Notes ###
-        # - The robot can hold only one object at a time.
-        # For example: If it is holding fruits, it cannot pick up another object until it puts the fruits down.
-        # - Some objects, such as bins, may need to be opened before the robot can put objects inside.
-        # - If an object is not visible, the robot must explore the environment to locate it.
-
-        # ### INPUT FORMAT ###
-        # You will receive:
-        # - An image showing the robot's partial observation of the environment at the current time step.
-        # - A symbolic description of the environment, including the robot's location, any object it is holding, and the visible objects.
-
-        # ### OUTPUT FORMAT ###
-        # Based on the observation and symbolic state, output the **single best action**.
-
-        # **IMPORTANT:**
-        # - Output **ONLY one word**, with **no extra words** or explanations.
-        # - The output must be **exactly one** of the following words:
-        # "left", "right", "up", "down", "pickup", "drop", "get", "pedal", "grasp", "lift".
-        # - **DO NOT** output anything like "move left", "go right", "pick up item", or any other variation.
-        # - Output the action word alone, without quotes, punctuation, or extra text.
-
-        # **IMPORTANT: DO NOT OUTPUT ANYTHING BEYOND THE SPECIFIED FORMAT.**
-
         # ### Inputs ###
         # 'symbolic_state': {context}
         # """
@@ -150,7 +108,7 @@ Think through the task and output the action the robot should take next."""
             output_scores=True,
             return_dict_in_generate=True,
         )
-        print(prompt)
+        # print(prompt)
 
         # Decode the generated tokens to produce the hint.
         generated_ids = outputs.sequences[0]
@@ -159,7 +117,7 @@ Think through the task and output the action the robot should take next."""
             .strip()
             .lower()
         )
-        print(generated_text)
+        # print(generated_text)
 
         logits = torch.stack(
             outputs.scores, dim=0

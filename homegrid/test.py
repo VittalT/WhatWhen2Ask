@@ -715,7 +715,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints64"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints66"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -823,18 +823,18 @@ if __name__ == "__main__":
     # Uncomment to use:
 
     train_agent(
-        num_episodes=3000,
-        save_interval=100,
+        num_episodes=10_000,
+        save_interval=500,
         use_gpu=True,
     )
 
     evaluate_checkpoints(
         checkpoint_range=(
-            200,
-            3000,
-            200,
+            1000,
+            10_000,
+            1000,
         ),
-        test_episodes=100,
+        test_episodes=200,
         use_gpu=True,
     )
 

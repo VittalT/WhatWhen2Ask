@@ -9,7 +9,7 @@ from openai import OpenAI
 from sentence_transformers import SentenceTransformer, util
 import torch
 from PIL import Image
-from homegrid.utils import format_prompt, get_dummy_state, format_symbolic_state
+from homegrid.utils import format_prompt, format_action_prompt, get_dummy_state
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -17,7 +17,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class GPT4Helper:
     def __init__(self, model="gpt-4o"):
         # Load API key from JSON in the parent directory
-        key_file_path = os.path.expanduser("~") + "/openai_key.json"
+        # key_file_path = "/kaggle/input/openai" + "/openai_key.json"
+        key_file_path = "/kaggle/input/d/vittalthirumalai/openai" + "/openai_key.json"
         with open(key_file_path) as json_file:
             key = json.load(json_file)
         self.api_key = key["my_openai_api_key"]
@@ -59,7 +60,6 @@ class GPT4Helper:
             confidence: Confidence score for the selected action
         """
         observation, info = state
-        context = format_symbolic_state(info["symbolic_state"])
         # observation.show()
         # print(state_str)
 
@@ -71,34 +71,9 @@ class GPT4Helper:
         observation.save(buffered, format="PNG")
         img_str = base64.b64encode(buffered.getvalue()).decode()
 
-        prompt = f"""
-You are an intelligent robot operating in a grid-based environment. Your goal is to complete the following task: **{task}**.
+        prompt = format_action_prompt(task, info)
 
-You can perform the following actions:  
-left, right, up, down, pickup, drop, get, pedal, grasp, lift
-
-### Important Rules:
-- Moving in a direction (left, right, up, down) causes the agent to move one tile in that direction and then face that direction.
-- You can only interact (pickup, drop, get, pedal, grasp, lift) objects if you are facing them.
-- You can only carry one object at a time.
-- There may be obstacles in the way that prevent you from moving in a direction.
-
-Here is your current state and surroundings. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
-{context}
-
-### Output Format:
-Think step by step to reason through the current situation.  
-Then, output the best next action.  
-The first word of your response **must** be the chosen action (in lowercase), followed by a short explanation (on the next line).
-
-Example:  
-"left
-The agent needs to get closer to the papers in order to pick them up. The papers at (3, 10) are to the left of the agent at (7, 10)"
-
-Now, determine the best next action.
-"""
-
-        print(prompt)
+        # print(prompt)
 
         messages = [
             {
@@ -134,7 +109,7 @@ Now, determine the best next action.
 
         # Get the generated action
         generated_text = response.choices[0].message.content.strip().lower()
-        print(generated_text)
+        # print(generated_text)
 
         # Extract token-level log probabilities
         token_logprobs = [
