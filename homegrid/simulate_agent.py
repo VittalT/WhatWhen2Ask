@@ -145,9 +145,9 @@ class AgentSimulator:
 
             # Set to evaluation mode
             agent.model.eval()
+            agent.update_target_network()
 
         agent.env = self.env  # Connect agent to environment
-        agent.update_target_network()
         return agent
 
     def setup_visualization(self):
