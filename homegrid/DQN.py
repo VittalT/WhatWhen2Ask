@@ -27,7 +27,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -1239,11 +1239,19 @@ class DQNAgent:
                 weights.clone().detach().to(dtype=torch.float32, device=self.device)
             )
 
-        # Compute target Q-values
         with torch.no_grad():
-            next_q_values = self.target_model(*next_state_components)
-            max_next_q_values, _ = torch.max(next_q_values, dim=1)
-            target_q_values = rewards + self.gamma * (1 - dones) * max_next_q_values
+            # Double DQN: Use online network to SELECT actions
+            next_q_values_online = self.model(*next_state_components)
+            best_actions = torch.argmax(next_q_values_online, dim=1)
+
+            # Use target network to EVALUATE those actions
+            next_q_values_target = self.target_model(*next_state_components)
+            next_q_values = next_q_values_target.gather(
+                1, best_actions.unsqueeze(1)
+            ).squeeze(1)
+
+            # Calculate target Q-values (this should also be in no_grad)
+            target_q_values = rewards + self.gamma * (1 - dones) * next_q_values
 
         # Compute current Q-values
         current_q_values = self.model(*state_components)
