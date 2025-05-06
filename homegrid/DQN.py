@@ -27,7 +27,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = False
+USE_LLMS = True
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -842,6 +842,78 @@ class DQNAgent:
         print("\nAll shape checks passed ✓")
         return True
 
+    def filter_state(self, obs, info):
+        """
+        Crop the observation image to a square centered around the agent's position.
+        Size is self.agent_view_size tiles, each tile is 32x32 pixels with exact tile boundaries.
+        Also filters symbolic state to only include objects that have been seen before.
+        """
+        # Get agent position
+        agent_pos = info["symbolic_state"]["agent"]["pos"]
+        tile_size = 32
+
+        # Full image dimensions
+        image = obs["image"]
+
+        # Calculate the center tile coordinates
+        center_x = agent_pos[0]
+        center_y = agent_pos[1]
+
+        # Calculate the top-left tile (half of view size in each direction)
+        half_view = self.agent_view_size // 2
+        tile_left = max(0, center_x - half_view)
+        tile_top = max(0, center_y - half_view)
+
+        # Convert to pixel coordinates
+        pixel_left = tile_left * tile_size
+        pixel_top = tile_top * tile_size
+
+        # Crop the image
+        right = min(image.shape[1], pixel_left + self.agent_view_size * tile_size)
+        bottom = min(image.shape[0], pixel_top + self.agent_view_size * tile_size)
+        cropped_image = image[pixel_top:bottom, pixel_left:right]
+        filtered_obs = {"image": cropped_image}
+
+        # # Ensure exact size with padding if needed
+        # view_pixels = self.agent_view_size * tile_size
+        # if (
+        #     cropped_image.shape[0] != view_pixels
+        #     or cropped_image.shape[1] != view_pixels
+        # ):
+        #     padded = np.zeros((view_pixels, view_pixels, 3), dtype=image.dtype)
+        #     padded[: cropped_image.shape[0], : cropped_image.shape[1]] = cropped_image
+        #     cropped_image = padded
+        # Filter symbolic state to only include objects we've seen
+
+        filtered_objs = [
+            obj
+            for obj in info["symbolic_state"]["objects"]
+            if self.object_to_channel(obj) in self.object_positions
+        ]
+
+        # Create a filtered version of the symbolic state
+        filtered_info = {
+            "symbolic_state": {
+                "agent": info["symbolic_state"]["agent"],  # Agent info remains the same
+                "objects": filtered_objs,  # Only include objects we've seen
+            }
+        }
+
+        # Create filtered observation and info
+
+        return filtered_obs, filtered_info
+
+    def query_llm(self, type, task, obs, info):
+        """
+        Query the LLM with the given hint type, task, and state.
+        """
+        llm_obs, llm_info = self.filter_state(obs, info)
+        if type == "open":
+            hint, confidence = self.open_llm.query_llm(task, llm_obs, llm_info)
+        elif type == "closed":
+            hint, confidence = self.closed_llm.query_llm(task, llm_obs, llm_info)
+        return hint, confidence
+
     def choose_action(self, obs, info, testing=False):
         """
         Choose an action using epsilon-greedy policy.
@@ -870,7 +942,7 @@ class DQNAgent:
             )
             if can_query_open:
                 # Generate hint using LLM
-                hint, confidence = self.open_llm.query_llm(self.env.task, obs, info)
+                hint, confidence = self.query_llm("open", self.env.task, obs, info)
                 # print(
                 #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
                 # )
@@ -1616,8 +1688,8 @@ if __name__ == "__main__":
     obs, info = agent.reset()
     print(agent.choose_action(obs, info, testing=True))
     if USE_LLMS:
-        print(agent.open_llm.query_llm(agent.env.task, obs, info))
-        print(agent.closed_llm.query_llm(agent.env.task, obs, info))
+        print(agent.query_llm("open", agent.env.task, obs, info))
+        print(agent.query_llm("closed", agent.env.task, obs, info))
 
     # Run shape checks to validate tensor dimensions
     try:

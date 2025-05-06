@@ -17,8 +17,8 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 class GPT4Helper:
     def __init__(self, model="gpt-4o"):
         # Load API key from JSON in the parent directory
-        # key_file_path = "/kaggle/input/openai" + "/openai_key.json"
-        key_file_path = "/kaggle/input/d/vittalthirumalai/openai" + "/openai_key.json"
+        # key_file_path = "/kaggle/input/d/vittalthirumalai/openai" + "/openai_key.json"
+        key_file_path = os.path.expanduser("~") + "/openai_key.json"
         with open(key_file_path) as json_file:
             key = json.load(json_file)
         self.api_key = key["my_openai_api_key"]
@@ -142,6 +142,7 @@ class GPT4Helper:
             confidence: Confidence score for the generated hint
         """
         observation = Image.fromarray(obs["image"])
+        # observation.show()
         prompt = format_prompt(task, info)
 
         # Convert PIL image to base64 for API

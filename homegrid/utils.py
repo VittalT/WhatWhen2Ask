@@ -18,16 +18,22 @@ def format_symbolic_state(symbolic_state):
     agent_room = room_map[agent["room"]]
 
     description = f"The agent is in the {agent_room} at location {agent_pos}, facing {agent_dir}, carrying {carrying}.\n"
-    description += "The objects in the house are:\n"
-
-    for obj in symbolic_state["objects"]:
-        if not obj["invisible"]:
-            name = obj["name"]
-            room = room_map[obj["room"]]
-            pos = tuple(int(x) for x in obj["pos"])
-            state = obj["state"]
-            state_text = f" in state {state}" if state else ""
-            description += f"- a {name} in the {room} at location {pos}{state_text}.\n"
+    if symbolic_state["objects"]:
+        description += "The objects in the house are:\n"
+        for obj in symbolic_state["objects"]:
+            if not obj["invisible"]:
+                name = obj["name"]
+                room = room_map[obj["room"]]
+                pos = tuple(int(x) for x in obj["pos"])
+                state = obj["state"]
+                state_text = f" in state {state}" if state else ""
+                description += (
+                    f"- a {name} in the {room} at location {pos}{state_text}.\n"
+                )
+    else:
+        description += (
+            "No objects are visible within the agent's current field of view.\n"
+        )
 
     return description.strip()
 
@@ -36,23 +42,23 @@ def format_prompt(task, info):
     """Format the prompt for the LLM models."""
     context = format_symbolic_state(info["symbolic_state"])
     prompt_text = f"""
-You are assisting a reinforcement learning agent navigating a grid-based house to complete tasks by interacting with objects.
-The task is to {task}.
+You are assisting a reinforcement learning agent navigating a grid-based house to complete tasks by interacting with objects. The agent is currently uncertain and has asked for your help.
 
-The agent uses a DQN that takes in a partially observable egocentric view, state context, and your hint to decide which action to take.
-Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
+Agent task: {task}
+Available agent actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift
 
-Here is your current state and surroundings. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
+The agent uses a Deep Q-Network (DQN) that takes in a partially observable egocentric view, state context (including memory from previous steps), and your hint to decide which action to take.
+
 State Context:
+Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
 {context}
 
-You are also provided with the global observation, which the agent cannot see.
+The image provided is the agent's current egocentric view.
 
-Do not repeat the task, the agent already has this.
+Think step by step to reason through the current situation. Then, provide one concise, specific, and actionable hint that can help the agent over the next several steps.
+Do not repeat the task or state context, the agent already has these. Instead, infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to explore, where an object might be located, or what action might be effective.
 
-Instead, analyze the image and state context to infer a new, helpful insight that will inform the agent's upcoming decisions — such as which direction to move, where an object is located, or what action might be effective.
-
-Provide one concise, specific, and actionable hint that can help the agent over the next several steps.
+Hint:
 """
     return prompt_text
 
@@ -61,9 +67,9 @@ def format_action_prompt(task, info):
     context = format_symbolic_state(info["symbolic_state"])
     prompt_text = f"""
 You are an intelligent robot navigating a grid-based house to complete tasks by interacting with objects.
-The task is to {task}.
 
-Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
+Task: {task}
+Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift
 
 ### Important Rules:
 - Moving in a direction (left, right, up, down) causes the agent to move one tile in that direction and then face that direction.
@@ -71,16 +77,19 @@ Available actions: left, right, up, down, pickup, drop, get, pedal, grasp, lift.
 - You can only carry one object at a time.
 - There may be obstacles in the way that prevent you from moving in a direction.
 
-Here is your current state and surroundings. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
 ### State Context:
+Some of the context is memory from previous steps. Locations are given in the format (x, y), where x represents horizontal position (left to right) and y represents vertical position (top to bottom).
 {context}
+
+The image provided is your current partially observable egocentric view.
 
 ### Output Format:
 Think step by step to reason through the current situation.
-Then, output the best next action.  
-The first word of your response must be the chosen action (in lowercase), followed by a short explanation (on the next line).
+Then output the best next action as follows:
+First line: the chosen action (in lowercase)
+Second line: a brief explanation of your reasoning
 
-Now, determine the best next action.
+Action:
 """
     return prompt_text
 
