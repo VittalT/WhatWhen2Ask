@@ -27,7 +27,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
