@@ -926,6 +926,7 @@ class DQNAgent:
         # print(f"DQN Confidence: {dqn_confidence:.4f}")
 
         # Check if we should use LLM hints)
+        # print(dqn_confidence)
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
             can_query_open = self.current_step - self.last_open >= self.open_cooldown
             can_query_closed = (
@@ -934,9 +935,6 @@ class DQNAgent:
             if can_query_open:
                 # Generate hint using LLM
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
-                print(
-                    f"step: {self.current_step}, hint: {hint}, confidence: {confidence}"
-                )
                 # print(
                 #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
                 # )
