@@ -170,21 +170,28 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.alpha = 1e-4  # Lower learning rate for more stable learning
+        self.alpha = 1e-4  # learning rate
         self.gamma = 0.99
         self.epsilon = 1.0
-        self.batch_size = 64
+        self.batch_size = 128
         self.episodes = episodes
-        self.epsilon_decay = 0.998  # Slower decay helps explore more thoroughly
-        self.epsilon_min = 0.15  # Higher minimum exploration rate
-        self.open_llm_cost = 0.00  # todo
-        self.closed_llm_cost = 0.00  # todo
+        self.epsilon_decay = 0.9995
+        self.epsilon_min = 0.05
+        self.open_llm_cost = 0.00
+        self.closed_llm_cost = 0.00
         self.current_hint = ""
-        self.agent_view_size = 23
-        self.train_start = 3000
+        self.agent_view_size = 7
+        self.train_start = 20_000
         self.train_every = 8
-        self.max_replay_buffer_size = 200_000  # Replay buffer capacity
-        self.target_update_freq = 2000
+        self.max_replay_buffer_size = 200_000
+        self.target_update_freq = 5_000
+
+        # Prioritized experience replay parameters
+        self.use_per = True  # Can set to False if computationally expensive
+        self.per_alpha = 0.4
+        self.per_beta = 0.6
+        self.per_beta_increment = 0.0002
+        self.per_epsilon = 0.01
 
         # Get grid dimensions from environment
         self.width = 12  # bit less than env.width
@@ -221,13 +228,6 @@ class DQNAgent:
             "experiences": deque(maxlen=self.max_replay_buffer_size),
             "priorities": deque(maxlen=self.max_replay_buffer_size),
         }
-
-        # Prioritized experience replay parameters
-        self.use_per = True  # Can set to False if computationally expensive
-        self.per_alpha = 0.4
-        self.per_beta = 0.6
-        self.per_beta_increment = 0.0002
-        self.per_epsilon = 0.01
 
         # Number of actions from environment
         self.output_dim = self.env.action_space.n
@@ -928,8 +928,8 @@ class DQNAgent:
         # Check if carrying first objective (in a multi-objective task)
         carrying_first_obj = (
             carrying is not None
-            and carrying == self.objectives[0]["name"]
             and len(self.objectives) > 1
+            and carrying == self.objectives[0]["name"]
         )
 
         # If carrying the first object and there's more objectives, focus on the next one
