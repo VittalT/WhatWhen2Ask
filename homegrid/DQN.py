@@ -261,8 +261,8 @@ class DQNAgent:
             self.closed_llm = _closed_llm_helper
 
         self.dqn_threshold = 0.8
-        self.open_threshold = 0.5
-        self.closed_threshold = 0.5
+        self.open_threshold = 0.6
+        self.closed_threshold = 0.6
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -318,7 +318,7 @@ class DQNAgent:
         # Reset LLM-related variables
         self.num_llm_calls = 0
         self.current_hint = ""
-        self.open_cooldown = 150
+        self.open_cooldown = 20
         self.closed_cooldown = 4000
         self.last_open = -200
         self.last_closed = -200
@@ -685,19 +685,10 @@ class DQNAgent:
 
         # Compute softmax and entropy on GPU for better performance
         with torch.no_grad():
-            # Apply softmax with numerical stability
             q_values = q_values.squeeze(0)
-            # print(f"Q-values: {q_values}")
             q_values = q_values - torch.max(q_values)
-            # print(f"Q-values after max: {q_values}")
-            # T = torch.std(q_values).item() + 1e-8
-            # print(f"T: {T}")
             T = 0.1
-            # probabilities = torch.softmax(q_values, dim=0)
-            # print(f"Probabilities: {probabilities}")
             probabilities = torch.softmax(q_values / T, dim=0)
-            # print(f"Probabilities: {probabilities}")
-
             confidence = probabilities.max().cpu().item()
 
         return confidence
@@ -934,7 +925,7 @@ class DQNAgent:
         dqn_confidence = self.confidence_score(q_values)
         # print(f"DQN Confidence: {dqn_confidence:.4f}")
 
-        # Check if we should use LLM hints
+        # Check if we should use LLM hints)
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
             can_query_open = self.current_step - self.last_open >= self.open_cooldown
             can_query_closed = (
@@ -943,19 +934,23 @@ class DQNAgent:
             if can_query_open:
                 # Generate hint using LLM
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
+                print(
+                    f"step: {self.current_step}, hint: {hint}, confidence: {confidence}"
+                )
                 # print(
                 #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
                 # )
-                self.current_hint = hint
-                self.last_open = self.current_step
-                self.open_llm_cost *= 2
-                cost = self.open_llm_cost
+                if confidence > self.open_threshold:
+                    self.current_hint = hint
+                    self.last_open = self.current_step
+                    self.open_llm_cost *= 2
+                    cost = self.open_llm_cost
 
-                # Reprocess state with new hint
-                self.update_state(obs, info)
-                # Get new Q-values with the updated hint
-                with torch.no_grad():
-                    q_values = self.model(*self.state)
+                    # Reprocess state with new hint
+                    self.update_state(obs, info)
+                    # Get new Q-values with the updated hint
+                    with torch.no_grad():
+                        q_values = self.model(*self.state)
 
         # Greedy action selection using pre-computed q_values
         action = torch.argmax(q_values, dim=1).item()
