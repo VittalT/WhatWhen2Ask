@@ -23,12 +23,12 @@ from sentence_transformers import SentenceTransformer
 SENTENCE_TRANSFORMER_DIM = 384
 TASK_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 10
-)  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding
+)  # all-MiniLM-L6-v2 embedding dime0nsion + 10 for multihot encoding
 HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = False
+USE_LLMS = True
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -265,7 +265,7 @@ class DQNAgent:
         self.open_threshold = 0.6
         self.closed_threshold = 0.7
         self.open_cooldown = 20
-        self.closed_cooldown = 150
+        self.closed_cooldown = 230
 
         # Checkpoint interval
         self.checkpoint_interval = 100
