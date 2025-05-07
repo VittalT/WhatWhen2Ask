@@ -265,7 +265,8 @@ class DQNAgent:
         self.open_threshold = 0.6
         self.closed_threshold = 0.7
         self.open_cooldown = 20
-        self.closed_cooldown = 230
+        self.closed_cooldown = 500
+        self.last_closed = -200
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -326,7 +327,6 @@ class DQNAgent:
         self.closed_llm_queries = 0
         self.current_hint = ""
         self.last_open = -200
-        self.last_closed = -200
         self.last_closed_confidence = 0
 
         # Parse objectives if needed
@@ -936,7 +936,7 @@ class DQNAgent:
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
             can_query_open = self.current_step - self.last_open >= self.open_cooldown
             can_query_closed = (
-                self.current_step - self.last_closed >= self.closed_cooldown
+                self.total_steps - self.last_closed >= self.closed_cooldown
             )
 
             if can_query_open:
@@ -954,9 +954,9 @@ class DQNAgent:
             if not updated_hint and can_query_closed:
                 hint, confidence = self.query_llm("closed", self.env.task, obs, info)
                 # print(
-                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.current_step}, Closed Hint: {hint}, Confidence: {confidence:.4f}"
+                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.total_steps}, Closed Hint: {hint}, Confidence: {confidence:.4f}"
                 # )
-                self.last_closed = self.current_step
+                self.last_closed = self.total_steps
                 self.last_closed_confidence = confidence
                 self.closed_llm_queries += 1
 
@@ -1765,20 +1765,176 @@ class DQNAgent:
             self.closed_llm = _closed_llm_helper
 
 
+# Benchmark functions for performance testing
+def benchmark_episode_runtime(agent, num_episodes=10, use_llm=False):
+    """Benchmark the runtime of test episodes with epsilon=0 (greedy only)"""
+    print("\n=== Benchmarking Test Episode Runtime ===")
+    print(f"Running {num_episodes} episodes with epsilon=0 (greedy policy)")
+    print(f"USE_LLMS setting: {use_llm}")
+    global USE_LLMS
+    # Save original settings
+    original_epsilon = agent.epsilon
+    original_use_llms = USE_LLMS
+
+    # Set test conditions
+    agent.epsilon = 0  # Force greedy policy
+    USE_LLMS = use_llm
+
+    episode_times = []
+    rewards = []
+    steps_per_episode = []
+
+    for i in range(num_episodes):
+        obs, info = agent.reset()
+        episode_start = time.time()
+
+        # Run one full episode
+        step_count = 0
+        total_reward = 0
+        while True:
+            action, _ = agent.choose_action(obs, info, testing=True)
+            obs, reward, terminated, truncated, info = agent.env.step(action)
+            agent.update_state(obs, info, action)
+            total_reward += reward
+            step_count += 1
+
+            if (
+                terminated
+                or truncated
+                or total_reward >= 1
+                or step_count >= agent.env.max_steps
+            ):
+                break
+
+        elapsed = time.time() - episode_start
+        episode_times.append(elapsed)
+        rewards.append(total_reward)
+        steps_per_episode.append(step_count)
+
+        print(
+            f"  Episode {i+1}/{num_episodes}: {elapsed:.3f}s, {step_count} steps, reward: {total_reward}"
+        )
+
+    # Calculate statistics
+    avg_time = sum(episode_times) / len(episode_times)
+    avg_steps = sum(steps_per_episode) / len(steps_per_episode)
+    success_rate = sum(1 for r in rewards if r >= 1) / len(rewards) * 100
+
+    print("\nResults:")
+    print(f"  Average episode time: {avg_time:.3f} seconds")
+    print(f"  Average steps per episode: {avg_steps:.1f}")
+    print(f"  Min episode time: {min(episode_times):.3f}s")
+    print(f"  Max episode time: {max(episode_times):.3f}s")
+    print(f"  Success rate: {success_rate:.1f}%")
+    print(f"  Time per step: {avg_time/avg_steps:.3f}s")
+    print("=========================================")
+
+    # Restore original settings
+    agent.epsilon = original_epsilon
+    USE_LLMS = original_use_llms
+
+    return avg_time, avg_steps
+
+
+def benchmark_llm_response_times(agent, num_calls=10):
+    """Benchmark the response times of open and closed LLMs"""
+    if not USE_LLMS:
+        print("\n=== LLM benchmarking skipped (USE_LLMS=False) ===")
+        return None, None
+
+    # Get a sample observation and info for testing
+    obs, info = agent.reset()
+
+    print("\n=== Benchmarking LLM Response Times (10 calls each) ===")
+
+    # Test open LLM (BLIP) with 10 calls
+    open_times = []
+    open_hints = []
+    open_confidences = []
+
+    print(f"Running {num_calls} Open LLM (BLIP) calls...")
+    for i in range(num_calls):
+        start_time = time.time()
+        open_hint, open_conf = agent.query_llm("open", agent.env.task, obs, info)
+        elapsed = time.time() - start_time
+        open_times.append(elapsed)
+        open_hints.append(open_hint)
+        open_confidences.append(open_conf)
+        print(f"  Call {i+1}/{num_calls}: {elapsed:.3f} seconds")
+
+    avg_open_time = sum(open_times) / len(open_times)
+    min_open_time = min(open_times)
+    max_open_time = max(open_times)
+
+    print(f"\nOpen LLM (BLIP) Results:")
+    print(f"  Average time: {avg_open_time:.3f} seconds")
+    print(f"  Min time: {min_open_time:.3f} seconds")
+    print(f"  Max time: {max_open_time:.3f} seconds")
+    print(f"  Avg confidence: {sum(open_confidences)/len(open_confidences):.4f}")
+
+    # Test closed LLM (GPT) with 10 calls
+    closed_times = []
+    closed_hints = []
+    closed_confidences = []
+
+    print(f"\nRunning {num_calls} Closed LLM (GPT) calls...")
+    for i in range(num_calls):
+        start_time = time.time()
+        closed_hint, closed_conf = agent.query_llm("closed", agent.env.task, obs, info)
+        elapsed = time.time() - start_time
+        closed_times.append(elapsed)
+        closed_hints.append(closed_hint)
+        closed_confidences.append(closed_conf)
+        print(f"  Call {i+1}/{num_calls}: {elapsed:.3f} seconds")
+
+    avg_closed_time = sum(closed_times) / len(closed_times)
+    min_closed_time = min(closed_times)
+    max_closed_time = max(closed_times)
+
+    print(f"\nClosed LLM (GPT) Results:")
+    print(f"  Average time: {avg_closed_time:.3f} seconds")
+    print(f"  Min time: {min_closed_time:.3f} seconds")
+    print(f"  Max time: {max_closed_time:.3f} seconds")
+    print(f"  Avg confidence: {sum(closed_confidences)/len(closed_confidences):.4f}")
+
+    print(f"\nTime ratio (Closed/Open): {avg_closed_time/avg_open_time:.2f}x")
+    print(f"Sample hint (Open): {open_hints[0]}")
+    print(f"Sample hint (Closed): {closed_hints[0]}")
+    print("====================================================")
+
+    return avg_open_time, avg_closed_time
+
+
 if __name__ == "__main__":
-    # Initialize the Simulator
+    # Initialize the agent
     agent = DQNAgent(
         env_name="homegrid-task",
-        episodes=5,  # Just 5 test episodes to start
-        checkpoint_dir="checkpoints61",  # or any directory you want
+        episodes=5,
+        checkpoint_dir="checkpoints61",
     )
-
-    # Reset environment and agent state
     obs, info = agent.reset()
     print(agent.choose_action(obs, info, testing=True))
     if USE_LLMS:
         print(agent.query_llm("open", agent.env.task, obs, info))
         print(agent.query_llm("closed", agent.env.task, obs, info))
+
+    # # Benchmark without LLM support
+    # print("\nBenchmark without LLMs:")
+    # no_llm_time, no_llm_steps = benchmark_episode_runtime(
+    #     agent, num_episodes=10, use_llm=False
+    # )
+
+    # # Benchmark with LLM support
+    # print("\nBenchmark with LLMs:")
+    # llm_time, llm_steps = benchmark_episode_runtime(
+    #     agent, num_episodes=10, use_llm=True
+    # )
+
+    # # Show comparison
+    # if llm_time > 0 and no_llm_time > 0:
+    #     print("\nPerformance comparison:")
+    #     print(f"  LLM overhead: {llm_time - no_llm_time:.3f}s per episode")
+    #     print(f"  Relative performance: {llm_time/no_llm_time:.2f}x slower with LLMs")
 
     # Run shape checks to validate tensor dimensions
     try:
