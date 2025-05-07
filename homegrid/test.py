@@ -11,6 +11,7 @@ import multiprocessing
 from datetime import datetime
 import sys
 from itertools import product
+import pickle
 
 
 # Create a function to log output to both console and file
@@ -51,26 +52,24 @@ def load_agent(
             torch.backends.cudnn.benchmark = True
             torch.backends.cudnn.deterministic = False
 
-    agent = DQNAgent(
-        env_name=env_name, episodes=episodes, checkpoint_dir=checkpoint_dir
-    )
-
     # Track the episode number of the loaded checkpoint for proper numbering of future checkpoints
     loaded_episode = 0
 
     if checkpoint_path is not None:
-        # Handle both direct paths and episode numbers
+        # Handle episode numbers (use pickle)
         if isinstance(checkpoint_path, int):
             loaded_episode = checkpoint_path
-            checkpoint_path = os.path.join(
-                training_dir, f"model_checkpoint_{checkpoint_path}.pth"
-            )
-
+            pickle_path = os.path.join(training_dir, "latest_agent.pkl")
+            print(f"Loading full agent from: {pickle_path}")
+            with open(pickle_path, "rb") as f:
+                agent = pickle.load(f)
+            print(f"Loaded agent with pickle with epsilon {agent.epsilon:.4f}")
+            # Set the episode number to ensure proper continuation
+            print(f"Episode number: {agent.episode}, now set to: {loaded_episode}")
+            agent.episode = loaded_episode
+            return agent
         elif str(checkpoint_path) == "best":
             checkpoint_path = os.path.join(training_dir, "best_model.pth")
-            # For "best" model, try to extract the episode number from the checkpoint
-            # This will be set from the checkpoint data below
-
         elif str(checkpoint_path) == "final":
             # Look for the most recent final model
             final_models = []
@@ -87,6 +86,11 @@ def load_agent(
                 checkpoint_path = sorted(
                     final_models, key=os.path.getmtime, reverse=True
                 )[0]
+
+        # Create a new agent for non-pickle loads
+        agent = DQNAgent(
+            env_name=env_name, episodes=episodes, checkpoint_dir=checkpoint_dir
+        )
 
         # Load the model
         print(f"Loading checkpoint: {checkpoint_path}")
@@ -106,7 +110,7 @@ def load_agent(
             print(f"Loaded from episode {loaded_episode}")
 
         # Store the loaded episode number in the agent for proper checkpoint naming
-        agent.previous_episode = loaded_episode
+        agent.episode = loaded_episode
 
         print(
             f"Loaded checkpoint with epsilon {agent.epsilon:.4f} and {agent.total_steps} total steps"
@@ -116,6 +120,10 @@ def load_agent(
         agent.update_target_network()
         return agent
 
+    # If no checkpoint provided, create a new agent
+    agent = DQNAgent(
+        env_name=env_name, episodes=episodes, checkpoint_dir=checkpoint_dir
+    )
     return agent
 
 
@@ -343,19 +351,21 @@ def evaluate_checkpoints(
         "shaped_reward": baseline_shaped_reward,
     }
 
-    # Test each checkpoint
+    # Test each checkpoint - load from stored checkpoint files, not using the pickle file
     checkpoints_tested = 0
     total_eval_time = baseline_time
 
     for episode in range(start, end + 1, step):
-        checkpoint_path = os.path.join(training_dir, f"model_checkpoint_{episode}.pth")
         print(f"\nEvaluating checkpoint at episode {episode}...")
 
         # Clean up memory between checkpoints
         if use_gpu and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # Explicitly load checkpoint with weights_only=False
+        # Check if the specific checkpoint file exists
+        checkpoint_path = os.path.join(training_dir, f"model_checkpoint_{episode}.pth")
+
+        # Create a new agent and load the checkpoint
         agent = DQNAgent(env_name="homegrid-task", checkpoint_dir=checkpoint_dir)
         checkpoint = torch.load(
             checkpoint_path, map_location=device, weights_only=False

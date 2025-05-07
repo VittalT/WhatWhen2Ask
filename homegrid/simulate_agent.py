@@ -140,7 +140,7 @@ class AgentSimulator:
             if "total_steps" in checkpoint:
                 agent.total_steps = checkpoint["total_steps"]
             if "episode" in checkpoint:
-                agent.previous_episode = checkpoint["episode"]
+                agent.episode = checkpoint["episode"]
             print(f"Loaded checkpoint with epsilon {agent.epsilon:.4f}")
 
             # Set to evaluation mode

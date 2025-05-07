@@ -13,6 +13,7 @@ from pprint import pprint
 import matplotlib.pyplot as plt
 import os
 import json
+import pickle
 from PIL import Image
 from datetime import datetime
 import time
@@ -174,7 +175,6 @@ class DQNAgent:
         self.gamma = 0.99
         self.epsilon = 1.0
         self.batch_size = 128
-        self.episodes = episodes
         self.epsilon_decay = 0.9995
         self.epsilon_min = 0.05
         self.open_llm_cost = 0.00
@@ -218,8 +218,8 @@ class DQNAgent:
         # Track object positions for more efficient updates
         self.object_positions = {}  # Dictionary to store object positions by channel
 
-        # Track episode number from previous training
-        self.previous_episode = 0
+        # Track episode number
+        self.episode = 0
 
         self.total_steps = 0
 
@@ -1283,9 +1283,7 @@ class DQNAgent:
 
         return loss.item()
 
-    def train(self, episodes=None):
-        if episodes is None:
-            episodes = self.episodes
+    def train(self, episodes):
 
         # Set the model to training mode
         self.model.train()
@@ -1301,9 +1299,9 @@ class DQNAgent:
         best_reward = float("-inf")
         no_improvement_count = 0
 
-        for episode in range(episodes):
-            # Calculate actual episode number including previous training
-            actual_episode = episode + self.previous_episode
+        while self.episode < episodes:
+            # Calculate actual episode number
+            self.episode += 1
 
             episode_start_time = time.time()
             # Use reset method which already calls env.reset
@@ -1313,11 +1311,9 @@ class DQNAgent:
             original_reward_sum = 0  # Track actual rewards separately
 
             # Verbose logging every 500 episodes or as needed
-            verbose = episode % 500 == 0
+            verbose = self.episode % 500 == 0
             if verbose:
-                print(
-                    f"\nEpisode {actual_episode + 1}/{self.previous_episode + episodes}, Task: {self.env.task}"
-                )
+                print(f"\nEpisode {self.episode}/{episodes}, Task: {self.env.task}")
                 print(f"Current epsilon: {self.epsilon:.3f}")
 
             episode_loss = 0.0
@@ -1385,10 +1381,14 @@ class DQNAgent:
             # Calculate episode runtime
             episode_time = time.time() - episode_start_time
             total_time = time.time() - training_start_time
-            avg_time_per_episode = total_time / (episode + 1)
+            avg_time_per_episode = total_time / (self.episode + 1)
 
             # Log less frequently to speed up training
-            if (episode + 1) % 100 == 0 or episode == 0 or episode == episodes - 1:
+            if (
+                (self.episode + 1) % 100 == 0
+                or self.episode == 0
+                or self.episode == episodes - 1
+            ):
                 recent_rewards = rewards_history[-min(100, len(rewards_history)) :]
                 recent_original_rewards = original_rewards_history[
                     -min(100, len(original_rewards_history)) :
@@ -1399,7 +1399,7 @@ class DQNAgent:
                 )
 
                 print(
-                    f"Episode {actual_episode + 1}/{self.previous_episode + episodes}, "
+                    f"Episode {self.episode}/{episodes}, "
                     f"Time: {episode_time:.2f}s (Avg: {avg_time_per_episode:.2f}s), "
                     f"Shaped Reward: {total_reward:.4f}, "
                     f"Original Reward: {original_reward_sum:.2f}, "
@@ -1427,8 +1427,7 @@ class DQNAgent:
                             "model_state_dict": self.model.state_dict(),
                             "optimizer_state_dict": self.optimizer.state_dict(),
                             "epsilon": self.epsilon,
-                            "episode": actual_episode
-                            + 1,  # Store the next episode number
+                            "episode": self.episode,  # Store the current episode number
                             "total_steps": self.total_steps,
                             "avg_reward": avg_recent_reward,
                             "env_info": self.env_info,
@@ -1450,19 +1449,25 @@ class DQNAgent:
                         no_improvement_count = 0
 
             # Save checkpoint less frequently to speed up training
-            if (episode + 1) % self.checkpoint_interval == 0:
+            if self.episode % self.checkpoint_interval == 0:
                 checkpoint_path = os.path.join(
-                    self.training_dir, f"model_checkpoint_{actual_episode+1}.pth"
+                    self.training_dir, f"model_checkpoint_{self.episode}.pth"
                 )
                 checkpoint_data = {
                     "model_state_dict": self.model.state_dict(),
                     "optimizer_state_dict": self.optimizer.state_dict(),
                     "epsilon": self.epsilon,
-                    "episode": actual_episode + 1,  # Store the next episode number
+                    "episode": self.episode,  # Store the current episode number
                     "total_steps": self.total_steps,
                 }
                 torch.save(checkpoint_data, checkpoint_path)
                 print(f"Saved checkpoint: {checkpoint_path}")
+
+                # Save full DQN agent with pickle - use a single file that gets overwritten
+                pickle_path = os.path.join(self.training_dir, "latest_agent.pkl")
+                with open(pickle_path, "wb") as f:
+                    pickle.dump(self, f)
+                print(f"Saved full agent to: {pickle_path} (episode {self.episode})")
 
                 # Plot learning curve at checkpoints
                 if len(rewards_history) > 0:
@@ -1483,14 +1488,14 @@ class DQNAgent:
                         ]
 
                         plt.plot(
-                            range(window_size - 1, episode + 1),
+                            range(window_size - 1, self.episode + 1),
                             reward_moving_avg,
                             "b-",
                             linewidth=2,
                             label=f"Moving Avg (Window={window_size})",
                         )
 
-                    plt.title(f"Learning Curve - Rewards (Episode {actual_episode+1})")
+                    plt.title(f"Learning Curve - Rewards (Episode {self.episode})")
                     plt.ylabel("Shaped Reward")
                     plt.legend()
 
@@ -1517,29 +1522,27 @@ class DQNAgent:
                         ]
 
                         plt.plot(
-                            range(window_size - 1, episode + 1),
+                            range(window_size - 1, self.episode + 1),
                             original_reward_moving_avg,
                             "c-",
                             linewidth=2,
                             label=f"Moving Avg (Window={window_size})",
                         )
 
-                        plt.title(f"Original Reward (Episode {actual_episode+1})")
+                        plt.title(f"Original Reward (Episode {self.episode})")
                         plt.xlabel("Episode")
                         plt.ylabel("Original Reward")
                         plt.legend()
 
                     plt.tight_layout()
                     plot_path = os.path.join(
-                        self.training_dir, f"learning_curve_{actual_episode+1}.png"
+                        self.training_dir, f"learning_curve_{self.episode}.png"
                     )
                     plt.savefig(plot_path)
                     plt.close()
 
-    def test(self, episodes=None, render=False):
+    def test(self, episodes, render=False):
         """Test the agent's performance over multiple episodes using both original and shaped rewards"""
-        if episodes is None:
-            episodes = self.episodes
 
         # Set the model to evaluation mode
         self.model.eval()

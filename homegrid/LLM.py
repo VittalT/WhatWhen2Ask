@@ -354,9 +354,8 @@ if __name__ == "__main__":
     sim = LLMAgent(
         model_name="gpt-4o",
         env_name="homegrid-task",
-        episodes=5,  # Just 5 test episodes to start
         checkpoint_dir="checkpoints15",  # or any directory you want
     )
 
     # Test it
-    sim.test(render=True)  # Set render=True if you want to see the env
+    sim.test(episodes=5, render=True)  # Set render=True if you want to see the env
