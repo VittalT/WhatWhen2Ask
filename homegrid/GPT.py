@@ -10,6 +10,7 @@ from sentence_transformers import SentenceTransformer, util
 import torch
 from PIL import Image
 from homegrid.utils import format_prompt, format_action_prompt, get_dummy_state
+from pprint import pprint
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -176,7 +177,7 @@ class GPT4Helper:
                 ],
             },
         ]
-        # print(messages)
+        # pprint(messages)
 
         # Query GPT using the Chat Completion endpoint with the new API
         response = self.client.chat.completions.create(

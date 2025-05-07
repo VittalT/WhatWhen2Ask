@@ -178,8 +178,8 @@ class DQNAgent:
         self.batch_size = 128
         self.epsilon_decay = 0.9995
         self.epsilon_min = 0.05
-        self.open_llm_cost = 0.00
-        self.closed_llm_cost = 0.00
+        self.open_llm_cost = 0.015
+        self.closed_llm_cost = 0.25
         self.current_hint = ""
         self.agent_view_size = 7
         self.train_start = 20_000
@@ -263,9 +263,9 @@ class DQNAgent:
 
         self.dqn_threshold = 0.8
         self.open_threshold = 0.6
-        self.closed_threshold = 0.6
+        self.closed_threshold = 0.7
         self.open_cooldown = 20
-        self.closed_cooldown = 4000
+        self.closed_cooldown = 150
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -322,10 +322,12 @@ class DQNAgent:
         self.visited_rooms = set()
 
         # Reset LLM-related variables
-        self.num_llm_calls = 0
+        self.open_llm_queries = 0
+        self.closed_llm_queries = 0
         self.current_hint = ""
         self.last_open = -200
         self.last_closed = -200
+        self.last_closed_confidence = 0
 
         # Parse objectives if needed
         self.previous_potential = None
@@ -913,9 +915,10 @@ class DQNAgent:
         """
         Choose an action using epsilon-greedy policy.
         """
-        cost = 0
         self.current_step += 1
         self.total_steps += 1
+        updated_hint = False
+        cost = 0
 
         # Epsilon-greedy action selection - check first to avoid unnecessary computation
         if not testing and random.random() < self.epsilon:
@@ -929,29 +932,42 @@ class DQNAgent:
         dqn_confidence = self.confidence_score(q_values)
         # print(f"DQN Confidence: {dqn_confidence:.4f}")
 
-        # Check if we should use LLM hints)
-        # print(dqn_confidence)
+        # Confidence-Based VLM Query Policy
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
             can_query_open = self.current_step - self.last_open >= self.open_cooldown
             can_query_closed = (
                 self.current_step - self.last_closed >= self.closed_cooldown
             )
+
             if can_query_open:
-                # Generate hint using LLM
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
                 # print(
-                #     f"Task: {self.env.task}\nStep: {self.current_step}\nEpisode: {self.total_steps//100}\nHint: {hint}\nConfidence: {confidence:.4f}"
+                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.current_step}, Open Hint: {hint}, Confidence: {confidence:.4f}"
                 # )
                 self.last_open = self.current_step
-                self.open_llm_cost *= 2
-                cost = self.open_llm_cost
-                if confidence > self.open_threshold:
+                self.open_llm_queries += 1
+
+                if confidence > max(self.open_threshold, self.last_closed_confidence):
                     self.current_hint = hint
-                    # Reprocess state with new hint
-                    self.update_state(obs, info)
-                    # Get new Q-values with the updated hint
-                    with torch.no_grad():
-                        q_values = self.model(*self.state)
+                    updated_hint = True
+
+            if not updated_hint and can_query_closed:
+                hint, confidence = self.query_llm("closed", self.env.task, obs, info)
+                # print(
+                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.current_step}, Closed Hint: {hint}, Confidence: {confidence:.4f}"
+                # )
+                self.last_closed = self.current_step
+                self.last_closed_confidence = confidence
+                self.closed_llm_queries += 1
+
+                if confidence > self.closed_threshold:
+                    self.current_hint = hint
+                    updated_hint = True
+
+        if updated_hint:
+            self.update_state(obs, info)
+            with torch.no_grad():
+                q_values = self.model(*self.state)
 
         # Greedy action selection using pre-computed q_values
         action = torch.argmax(q_values, dim=1).item()

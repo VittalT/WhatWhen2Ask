@@ -832,21 +832,21 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    # train_agent(
-    #     num_episodes=10_000,
-    #     save_interval=250,
-    #     use_gpu=True,
-    # )
+    train_agent(
+        num_episodes=10_000,
+        save_interval=250,
+        use_gpu=True,
+    )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         500,
-    #         4500,
-    #         500,
-    #     ),
-    #     test_episodes=200,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            1_000,
+            10_000,
+            1_000,
+        ),
+        test_episodes=200,
+        use_gpu=True,
+    )
 
     # test_agent(checkpoint=6000, num_episodes=1000, use_gpu=True)
 
