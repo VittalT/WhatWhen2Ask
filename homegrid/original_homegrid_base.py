@@ -13,24 +13,6 @@ from PIL import ImageDraw
 from homegrid.base import MiniGridEnv, Grid, Storage, Inanimate, Pickable
 from homegrid.layout import ThreeRoom, CANS, TRASH, room2name
 
-fixed_agent_pos = False
-fixed_obj_pos = False
-
-
-def seeded_random(seed_val=42, fixed=fixed_obj_pos):
-    """Reset seed and return random instance for consistent sampling."""
-    if fixed:
-        random.seed(seed_val)
-    else:
-        random.seed(None)
-    return random
-
-
-def seeded_np_random(seed_val=42):
-    """Reset numpy seed and return numpy random for consistent sampling."""
-    np.random.seed(seed_val)
-    return np.random
-
 
 class HomeGridBase(MiniGridEnv):
 
@@ -62,7 +44,7 @@ class HomeGridBase(MiniGridEnv):
         num_trashobjs=2,
         view_size=3,
         max_steps=100,
-        p_teleport=0.0,
+        p_teleport=0.05,
         max_objects=4,
         p_unsafe=0.0,
         fixed_state=None,
@@ -125,13 +107,8 @@ class HomeGridBase(MiniGridEnv):
             self.place_obj(obj, top=ob["pos"], size=(1, 1), max_tries=1)
 
     def _add_cans_to_house(self):
-        # cans = seeded_random().sample(CANS, self.num_trashcans)
-        # poss = seeded_random().sample(self.layout.valid_poss["can"], self.num_trashcans)
-        cans = ["compost_bin", "recycling_bin"]
-        poss = [
-            (1, 9),  # compost bin in kitchen matches semantic understanding
-            (11, 1),  # and recycling bin in living room
-        ]
+        cans = random.sample(CANS, self.num_trashcans)
+        poss = random.sample(self.layout.valid_poss["can"], self.num_trashcans)
         can_objs = []
         for i, can in enumerate(cans):
             obj = Storage(
@@ -148,17 +125,8 @@ class HomeGridBase(MiniGridEnv):
             self.objs.append(obj)
 
     def _add_objs_to_house(self):
-        # trash_objs = seeded_random().sample(TRASH, self.num_trashobjs)
-        # poss = seeded_random().sample(self.layout.valid_poss["obj"], self.num_trashobjs)
-        trash_objs = ["fruit", "bottle"]
-        poss = [
-            seeded_random().choice(
-                [(10, 8), (10, 9)]
-            ),  # fruit on the dining table matches semantic understanding
-            seeded_random().choice(
-                [(8, 2), (8, 3), (8, 4)]
-            ),  # bottle on the ground in living room
-        ]
+        trash_objs = random.sample(TRASH, self.num_trashobjs)
+        poss = random.sample(self.layout.valid_poss["obj"], self.num_trashobjs)
         trashobj_objs = []
         for i, trash in enumerate(trash_objs):
             obj = Pickable(trash, self.textures[trash])
@@ -183,9 +151,7 @@ class HomeGridBase(MiniGridEnv):
             self._add_objs_to_house()
 
         # Place agent
-        agent_poss = seeded_random(fixed=fixed_agent_pos).choice(
-            self.layout.valid_poss["agent_start"]
-        )
+        agent_poss = random.choice(self.layout.valid_poss["agent_start"])
         self.agent_pos = self.place_agent(top=agent_poss, size=(1, 1))
 
     def _create_layout(self, width, height):
@@ -196,7 +162,7 @@ class HomeGridBase(MiniGridEnv):
         self.cell_to_room = self.layout.cell_to_room
 
     def _maybe_teleport(self):
-        if seeded_np_random().random() > self.p_teleport:
+        if np.random.random() > self.p_teleport:
             return False
         objs = [
             o
@@ -208,9 +174,9 @@ class HomeGridBase(MiniGridEnv):
             print([o.cur_pos for o in self.objs])
             print(self.all_events)
             return False
-        obj = seeded_random().choice(objs)
+        obj = random.choice(objs)
         # Choose a random new location with no object to place this
-        poss = seeded_random().choice(
+        poss = random.choice(
             [
                 pos
                 for pos in self.layout.valid_poss["obj"]
@@ -225,12 +191,11 @@ class HomeGridBase(MiniGridEnv):
         return obj
 
     def _maybe_spawn(self):
-        return None
         new_objs = [t for t in TRASH if t not in [o.name for o in self.objs]]
-        if seeded_np_random().rand() < 0.1 * len(new_objs):
-            trash = seeded_random().choice(new_objs)
+        if np.random.rand() < 0.1 * len(new_objs):
+            trash = random.choice(new_objs)
             obj = Pickable(trash, self.textures[trash], invisible=True)
-            poss = seeded_random().choice(
+            poss = random.choice(
                 [
                     pos
                     for pos in self.layout.valid_poss["obj"]
@@ -245,16 +210,14 @@ class HomeGridBase(MiniGridEnv):
         return None
 
     def _maybe_unsafe(self):
-        if len(self.unsafe_poss) == 0 and seeded_np_random().rand() < self.p_unsafe:
-            can = seeded_random().choice(
-                [o for o in self.objs if isinstance(o, Storage)]
-            )
+        if len(self.unsafe_poss) == 0 and np.random.rand() < self.p_unsafe:
+            can = random.choice([o for o in self.objs if isinstance(o, Storage)])
             self.unsafe_poss = set()
             self.unsafe_name = can.name
             for x in [can.cur_pos[0] - 1, can.cur_pos[0], can.cur_pos[0] + 1]:
                 for y in [can.cur_pos[1] - 1, can.cur_pos[1], can.cur_pos[1] + 1]:
                     self.unsafe_poss.add((x, y))
-            self.unsafe_end = self.step_count + seeded_random().randint(1, 10)
+            self.unsafe_end = self.step_count + random.randint(1, 10)
             return can
         return None
 
@@ -487,4 +450,4 @@ class HomeGridBase(MiniGridEnv):
         draw.text((0, 0), text, (0, 0, 0))
         draw.text((0, 45), "Action: {}".format(self._env.prev_action), (0, 0, 0))
         img = np.asarray(img)
-        return img
+        return im
