@@ -284,6 +284,11 @@ class DQNAgent:
         self.rewards_history = []
         self.original_rewards_history = []
         self.training_start_time = None  # Will be set when training starts
+        self.last_100_episodes_start_time = (
+            None  # Time when the current 100-episode block started
+        )
+        self.steps_in_last_100 = 0  # Track steps taken in last 100 episodes
+        self.loss_in_last_100 = []  # Track losses in last 100 episodes
 
         # Save environment info for reproducibility
         self.env_info = {
@@ -1321,6 +1326,13 @@ class DQNAgent:
         if not hasattr(self, "training_start_time") or self.training_start_time is None:
             self.training_start_time = time.time()
 
+        # Initialize the first 100-episode block timer
+        if (
+            not hasattr(self, "last_100_episodes_start_time")
+            or self.last_100_episodes_start_time is None
+        ):
+            self.last_100_episodes_start_time = time.time()
+
         # Early stopping variables
         best_reward = float("-inf")
         no_improvement_count = 0
@@ -1401,6 +1413,15 @@ class DQNAgent:
 
             # Calculate average loss if we did any training steps
             avg_loss = episode_loss / max(1, train_steps)
+
+            # Track steps and loss for the last 100 episodes
+            self.steps_in_last_100 = self.steps_in_last_100 + step + 1
+            if train_steps > 0:
+                self.loss_in_last_100.append(avg_loss)
+                # Maintain only the most recent 100 loss values
+                if len(self.loss_in_last_100) > 100:
+                    self.loss_in_last_100 = self.loss_in_last_100[-100:]
+
             self.rewards_history.append(total_reward)
             self.original_rewards_history.append(original_reward_sum)
 
@@ -1410,7 +1431,7 @@ class DQNAgent:
             avg_time_per_episode = total_time / self.episode
 
             # Log less frequently to speed up training
-            if self.episode % 100 == 0 or self.episode == 0 or self.episode == episodes:
+            if self.episode % 100 == 0 or self.episode == 1 or self.episode == episodes:
                 recent_rewards = self.rewards_history[
                     -min(100, len(self.rewards_history)) :
                 ]
@@ -1422,16 +1443,37 @@ class DQNAgent:
                     recent_original_rewards
                 )
 
+                # Calculate time statistics
+                current_time = time.time()
+                last_100_time = current_time - self.last_100_episodes_start_time
+                success_count = sum(1 for r in recent_original_rewards if r >= 1)
+                success_rate = (success_count / len(recent_original_rewards)) * 100
+
+                # Calculate steps per episode for the last 100 episodes only
+                steps_per_episode = self.steps_in_last_100 / min(100, self.episode)
+
+                # Calculate average loss over the last 100 episodes
+                avg_recent_loss = (
+                    sum(self.loss_in_last_100) / max(1, len(self.loss_in_last_100))
+                    if self.loss_in_last_100
+                    else 0
+                )
+
                 print(
                     f"Episode {self.episode}/{episodes}, "
-                    f"Time: {episode_time:.2f}s (Avg: {avg_time_per_episode:.2f}s), "
-                    f"Shaped Reward: {total_reward:.4f}, "
-                    f"Original Reward: {original_reward_sum:.2f}, "
-                    f"Avg Recent Reward: {avg_recent_reward:.4f}, "
-                    f"Avg Recent Original Reward: {avg_recent_original_reward:.4f}, "
-                    f"Avg Loss: {avg_loss:.4f}, "
+                    f"Stats (last 100): "
+                    f"Time: {last_100_time:.1f}s, "
+                    f"Steps/episode: {steps_per_episode:.1f}, "
+                    f"Shaped Reward: {avg_recent_reward:.4f}, "
+                    f"Original Reward: {avg_recent_original_reward:.4f}, "
+                    f"Success rate: {success_rate:.1f}%, "
+                    f"Avg Loss: {avg_recent_loss:.4f}, "
                     f"Epsilon: {self.epsilon:.3f}"
                 )
+
+                # Reset the 100-episode block timer and step counter
+                self.last_100_episodes_start_time = current_time
+                self.steps_in_last_100 = 0
 
                 # Early stopping check - use average reward instead of success rate
                 if avg_recent_reward > best_reward:
