@@ -28,7 +28,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -176,22 +176,21 @@ class DQNAgent:
         self.gamma = 0.99
         self.epsilon = 1.0
         self.batch_size = 128
-        self.epsilon_decay = 0.9995
-        self.epsilon_min = 0.05
+        self.epsilon_decay = 0.9997
+        self.epsilon_min = 0.2
         self.open_llm_cost = 0.015
         self.closed_llm_cost = 0.25
-        self.current_hint = ""
         self.agent_view_size = 7
         self.train_start = 20_000
         self.train_every = 8
-        self.max_replay_buffer_size = 200_000
+        self.max_replay_buffer_size = 100_000
         self.target_update_freq = 5_000
 
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
-        self.per_alpha = 0.4
-        self.per_beta = 0.6
-        self.per_beta_increment = 0.0002
+        self.per_alpha = 0.6
+        self.per_beta = 0.4
+        self.per_beta_increment = 1e-5  # default
         self.per_epsilon = 0.01
 
         # Get grid dimensions from environment
