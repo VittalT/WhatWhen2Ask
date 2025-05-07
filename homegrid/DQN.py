@@ -28,7 +28,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -171,6 +171,7 @@ class DQNAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
+        self.env_name = env_name  # Store env_name for recreating env after pickling
         self.alpha = 1e-4  # learning rate
         self.gamma = 0.99
         self.epsilon = 1.0
@@ -280,6 +281,9 @@ class DQNAgent:
         # Performance tracking
         self.best_avg_reward = float("-inf")
         self.no_improvement_count = 0
+        self.rewards_history = []
+        self.original_rewards_history = []
+        self.training_start_time = None  # Will be set when training starts
 
         # Save environment info for reproducibility
         self.env_info = {
@@ -1288,12 +1292,19 @@ class DQNAgent:
         # Set the model to training mode
         self.model.train()
 
-        # For tracking performance trends
-        rewards_history = []
-        original_rewards_history = []  # Track original rewards instead of success rate
+        # For tracking performance trends - initialize if needed
+        if not hasattr(self, "rewards_history") or self.rewards_history is None:
+            self.rewards_history = []
 
-        # For tracking runtime
-        training_start_time = time.time()
+        if (
+            not hasattr(self, "original_rewards_history")
+            or self.original_rewards_history is None
+        ):
+            self.original_rewards_history = []
+
+        # Initialize training start time if not set
+        if not hasattr(self, "training_start_time") or self.training_start_time is None:
+            self.training_start_time = time.time()
 
         # Early stopping variables
         best_reward = float("-inf")
@@ -1375,23 +1386,25 @@ class DQNAgent:
 
             # Calculate average loss if we did any training steps
             avg_loss = episode_loss / max(1, train_steps)
-            rewards_history.append(total_reward)
-            original_rewards_history.append(original_reward_sum)
+            self.rewards_history.append(total_reward)
+            self.original_rewards_history.append(original_reward_sum)
 
             # Calculate episode runtime
             episode_time = time.time() - episode_start_time
-            total_time = time.time() - training_start_time
-            avg_time_per_episode = total_time / (self.episode + 1)
+            total_time = time.time() - self.training_start_time
+            avg_time_per_episode = total_time / self.episode
 
             # Log less frequently to speed up training
             if (
-                (self.episode + 1) % 100 == 0
+                self.episode % 10 == 0
                 or self.episode == 0
                 or self.episode == episodes - 1
             ):
-                recent_rewards = rewards_history[-min(100, len(rewards_history)) :]
-                recent_original_rewards = original_rewards_history[
-                    -min(100, len(original_rewards_history)) :
+                recent_rewards = self.rewards_history[
+                    -min(10, len(self.rewards_history)) :
+                ]
+                recent_original_rewards = self.original_rewards_history[
+                    -min(10, len(self.original_rewards_history)) :
                 ]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
                 avg_recent_original_reward = sum(recent_original_rewards) / len(
@@ -1416,7 +1429,7 @@ class DQNAgent:
 
                     # Save best model if significantly better, check average reward
                     if (
-                        len(rewards_history) >= 100
+                        len(self.rewards_history) >= 10
                         and avg_recent_reward > self.best_avg_reward
                     ):
                         self.best_avg_reward = avg_recent_reward
@@ -1465,30 +1478,56 @@ class DQNAgent:
 
                 # Save full DQN agent with pickle - use a single file that gets overwritten
                 pickle_path = os.path.join(self.training_dir, "latest_agent.pkl")
+
                 with open(pickle_path, "wb") as f:
                     pickle.dump(self, f)
                 print(f"Saved full agent to: {pickle_path} (episode {self.episode})")
 
+                # Create a metadata file with pickle info for easier loading
+                metadata_path = os.path.join(
+                    self.training_dir, "latest_agent_metadata.json"
+                )
+                with open(metadata_path, "w") as f:
+                    json.dump(
+                        {
+                            "episode": self.episode,
+                            "saved_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "epsilon": self.epsilon,
+                            "total_steps": self.total_steps,
+                            "rewards_history_length": len(self.rewards_history),
+                            "replay_buffer_size": len(
+                                self.replay_buffer["experiences"]
+                            ),
+                            "training_time_hrs": (
+                                (time.time() - self.training_start_time) / 3600
+                                if self.training_start_time
+                                else 0
+                            ),
+                        },
+                        f,
+                        indent=2,
+                    )
+
                 # Plot learning curve at checkpoints
-                if len(rewards_history) > 0:
+                if len(self.rewards_history) > 0:
                     plt.figure(figsize=(12, 8))
 
                     # Plot both reward and original reward as moving averages
                     plt.subplot(2, 1, 1)
 
                     # Plot raw rewards in light color
-                    plt.plot(rewards_history, "b-", alpha=0.3, label="Raw Rewards")
+                    plt.plot(self.rewards_history, "b-", alpha=0.3, label="Raw Rewards")
 
                     # Calculate moving average of rewards
-                    if len(rewards_history) > 100:
-                        window_size = 100
+                    if len(self.rewards_history) > 10:
+                        window_size = 10
                         reward_moving_avg = [
-                            sum(rewards_history[i : i + window_size]) / window_size
-                            for i in range(len(rewards_history) - window_size + 1)
+                            sum(self.rewards_history[i : i + window_size]) / window_size
+                            for i in range(len(self.rewards_history) - window_size + 1)
                         ]
 
                         plt.plot(
-                            range(window_size - 1, self.episode + 1),
+                            range(window_size - 1, self.episode),
                             reward_moving_avg,
                             "b-",
                             linewidth=2,
@@ -1504,25 +1543,25 @@ class DQNAgent:
 
                     # Plot raw original rewards in light color
                     plt.plot(
-                        original_rewards_history,
+                        self.original_rewards_history,
                         "c-",
                         alpha=0.3,
                         label="Raw Original Rewards",
                     )
 
                     # Calculate moving average of original rewards
-                    if len(original_rewards_history) > 100:
-                        window_size = 100
+                    if len(self.original_rewards_history) > 10:
+                        window_size = 10
                         original_reward_moving_avg = [
-                            sum(original_rewards_history[i : i + window_size])
+                            sum(self.original_rewards_history[i : i + window_size])
                             / window_size
                             for i in range(
-                                len(original_rewards_history) - window_size + 1
+                                len(self.original_rewards_history) - window_size + 1
                             )
                         ]
 
                         plt.plot(
-                            range(window_size - 1, self.episode + 1),
+                            range(window_size - 1, self.episode),
                             original_reward_moving_avg,
                             "c-",
                             linewidth=2,
@@ -1597,7 +1636,7 @@ class DQNAgent:
             shaped_rewards.append(total_shaped_reward)
 
             # Log progress periodically
-            if episode % 1000 == 0 or episode == episodes - 1:
+            if episode % 10 == 0 or episode == episodes - 1:
                 # Calculate success rate properly using task-specific attempts
                 success_rate = (
                     task_success_rates[current_task]["successes"]
@@ -1677,6 +1716,41 @@ class DQNAgent:
         print(f"\nTest results saved to: {results_file}")
 
         return average_reward, average_shaped_reward
+
+    # Special methods for pickle support
+    def __getstate__(self):
+        """Return state values to be pickled - exclude env and sentence_model."""
+        state = self.__dict__.copy()
+        # Don't pickle the environment - recreate it after unpickling
+        if "env" in state:
+            del state["env"]
+        # Don't pickle the sentence model - recreate it after unpickling
+        if "sentence_model" in state:
+            del state["sentence_model"]
+        if "open_llm" in state:
+            del state["open_llm"]
+        if "closed_llm" in state:
+            del state["closed_llm"]
+        return state
+
+    def __setstate__(self, state):
+        """Restore state from the unpickled state values."""
+        self.__dict__.update(state)
+        # Recreate environment
+        self.env = gym.make(self.env_name, disable_env_checker=True)
+        # Recreate sentence model
+        self.sentence_model = SentenceTransformer(
+            "all-MiniLM-L6-v2", device=self.device
+        )
+        # Recreate LLM helpers if needed
+        if USE_LLMS:
+            global _open_llm_helper, _closed_llm_helper
+            if _open_llm_helper is None:
+                _open_llm_helper = BLIP2Helper()
+            if _closed_llm_helper is None:
+                _closed_llm_helper = GPT4Helper()
+            self.open_llm = _open_llm_helper
+            self.closed_llm = _closed_llm_helper
 
 
 if __name__ == "__main__":

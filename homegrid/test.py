@@ -725,7 +725,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints69"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints70"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -808,12 +808,12 @@ if __name__ == "__main__":
     #         10,
     #         5,
     #     ),
-    #     test_episodes=50,
+    #     test_episodes=10,
     #     use_gpu=True,
     # )
 
     # train_agent(
-    #     num_episodes=10,
+    #     num_episodes=20,
     #     continue_from=10,
     #     save_interval=5,
     #     use_gpu=True,
@@ -821,32 +821,32 @@ if __name__ == "__main__":
 
     # evaluate_checkpoints(
     #     checkpoint_range=(
-    #         10,
+    #         5,
     #         20,
     #         5,
     #     ),
-    #     test_episodes=100,
+    #     test_episodes=10,
     #     use_gpu=True,
     # )
 
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=10_000,
-        save_interval=250,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=10_000,
+    #     save_interval=250,
+    #     use_gpu=True,
+    # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            500,
-            4500,
-            500,
-        ),
-        test_episodes=200,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         500,
+    #         4500,
+    #         500,
+    #     ),
+    #     test_episodes=200,
+    #     use_gpu=True,
+    # )
 
     # test_agent(checkpoint=6000, num_episodes=1000, use_gpu=True)
 
