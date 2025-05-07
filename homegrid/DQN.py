@@ -1395,16 +1395,12 @@ class DQNAgent:
             avg_time_per_episode = total_time / self.episode
 
             # Log less frequently to speed up training
-            if (
-                self.episode % 10 == 0
-                or self.episode == 0
-                or self.episode == episodes - 1
-            ):
+            if self.episode % 100 == 0 or self.episode == 0 or self.episode == episodes:
                 recent_rewards = self.rewards_history[
-                    -min(10, len(self.rewards_history)) :
+                    -min(100, len(self.rewards_history)) :
                 ]
                 recent_original_rewards = self.original_rewards_history[
-                    -min(10, len(self.original_rewards_history)) :
+                    -min(100, len(self.original_rewards_history)) :
                 ]
                 avg_recent_reward = sum(recent_rewards) / len(recent_rewards)
                 avg_recent_original_reward = sum(recent_original_rewards) / len(
@@ -1429,7 +1425,7 @@ class DQNAgent:
 
                     # Save best model if significantly better, check average reward
                     if (
-                        len(self.rewards_history) >= 10
+                        len(self.rewards_history) >= 100
                         and avg_recent_reward > self.best_avg_reward
                     ):
                         self.best_avg_reward = avg_recent_reward
@@ -1519,8 +1515,8 @@ class DQNAgent:
                     plt.plot(self.rewards_history, "b-", alpha=0.3, label="Raw Rewards")
 
                     # Calculate moving average of rewards
-                    if len(self.rewards_history) > 10:
-                        window_size = 10
+                    if len(self.rewards_history) > 100:
+                        window_size = 100
                         reward_moving_avg = [
                             sum(self.rewards_history[i : i + window_size]) / window_size
                             for i in range(len(self.rewards_history) - window_size + 1)
@@ -1550,8 +1546,8 @@ class DQNAgent:
                     )
 
                     # Calculate moving average of original rewards
-                    if len(self.original_rewards_history) > 10:
-                        window_size = 10
+                    if len(self.original_rewards_history) > 100:
+                        window_size = 100
                         original_reward_moving_avg = [
                             sum(self.original_rewards_history[i : i + window_size])
                             / window_size
@@ -1591,7 +1587,7 @@ class DQNAgent:
         steps_to_success = []
         task_success_rates = {}
 
-        for episode in range(episodes):
+        for episode in range(1, episodes + 1):
             # Use reset method which already calls env.reset
             obs, info = self.reset()
 
@@ -1636,7 +1632,7 @@ class DQNAgent:
             shaped_rewards.append(total_shaped_reward)
 
             # Log progress periodically
-            if episode % 10 == 0 or episode == episodes - 1:
+            if episode % 1000 == 0 or episode == episodes:
                 # Calculate success rate properly using task-specific attempts
                 success_rate = (
                     task_success_rates[current_task]["successes"]
@@ -1644,7 +1640,7 @@ class DQNAgent:
                 ) * 100
                 avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
                 print(
-                    f"Test Episode {episode+1}/{episodes}, "
+                    f"Test Episode {episode}/{episodes}, "
                     f"Original Reward: {total_reward:.4f}, "
                     f"Shaped Reward: {total_shaped_reward:.4f}, "
                     f"Success Rate: {success_rate:.1f}%, "

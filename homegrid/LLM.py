@@ -22,7 +22,7 @@ class LLMAgent:
 
         # Initialize environment and hyperparameters
         self.env = gym.make(env_name, disable_env_checker=True)
-        self.episodes = episodes
+        self.episodes = 0
 
         # Directory to save checkpoints
         self.checkpoint_dir = checkpoint_dir
@@ -212,9 +212,7 @@ class LLMAgent:
         action, confidence = self.llm.query_action(self.state, self.env.task)
         return action, cost
 
-    def test(self, episodes=None, render=False):
-        if episodes is None:
-            episodes = self.episodes
+    def test(self, episodes, render=False):
 
         total_rewards = []  # Original rewards
         shaped_rewards = []  # Shaped rewards
