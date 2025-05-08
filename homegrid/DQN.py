@@ -268,6 +268,12 @@ class DQNAgent:
         self.last_closed = -200
         self.open_llm_queries = 0
         self.closed_llm_queries = 0
+        self.p_open = (
+            5808.0 / 101296.0
+        )  # Empirically found form ckpt 73 testing 2K episodes
+        self.p_closed = (
+            203.0 / 101296.0
+        )  # Empirically found form ckpt 73 testing 2K episodes
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -932,42 +938,15 @@ class DQNAgent:
         with torch.no_grad():
             q_values = self.model(*self.state)
 
-        # Calculate uncertainty using pre-computed Q-values
-        dqn_confidence = self.confidence_score(q_values)
-        # print(f"DQN Confidence: {dqn_confidence:.4f}")
-
-        # Confidence-Based VLM Query Policy
-        if USE_LLMS and dqn_confidence < self.dqn_threshold:
-            can_query_open = self.current_step - self.last_open >= self.open_cooldown
-            can_query_closed = (
-                self.total_steps - self.last_closed >= self.closed_cooldown
-            )
-            # can_query_closed = False
-
-            if can_query_open:
-                hint, confidence = self.query_llm("open", self.env.task, obs, info)
-                # print(
-                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.current_step}, Open Hint: {hint}, Confidence: {confidence:.4f}"
-                # )
-                self.last_open = self.current_step
-                self.open_llm_queries += 1
-
-                if confidence > max(self.open_threshold, self.last_closed_confidence):
-                    self.current_hint = hint
-                    updated_hint = True
-
-            if not updated_hint and can_query_closed:
-                hint, confidence = self.query_llm("closed", self.env.task, obs, info)
-                # print(
-                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.total_steps}, Closed Hint: {hint}, Confidence: {confidence:.4f}"
-                # )
-                self.last_closed = self.total_steps
-                self.last_closed_confidence = confidence
-                self.closed_llm_queries += 1
-
-                if confidence > self.closed_threshold:
-                    self.current_hint = hint
-                    updated_hint = True
+        p = random.random()
+        if p < self.p_open:
+            self.current_hint, _ = self.query_llm("open", self.env.task, obs, info)
+            self.open_llm_queries += 1
+            updated_hint = True
+        elif p < self.p_open + self.p_closed:
+            self.current_hint, _ = self.query_llm("closed", self.env.task, obs, info)
+            self.closed_llm_queries += 1
+            updated_hint = True
 
         if updated_hint:
             self.update_state(obs, info)
