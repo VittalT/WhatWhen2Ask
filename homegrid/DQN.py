@@ -266,6 +266,8 @@ class DQNAgent:
         self.open_cooldown = 20
         self.closed_cooldown = 500
         self.last_closed = -200
+        self.open_llm_queries = 0
+        self.closed_llm_queries = 0
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -327,8 +329,6 @@ class DQNAgent:
         self.visited_rooms = set()
 
         # Reset LLM-related variables
-        self.open_llm_queries = 0
-        self.closed_llm_queries = 0
         self.current_hint = ""
         self.last_open = -200
         self.last_closed_confidence = 0
@@ -942,6 +942,7 @@ class DQNAgent:
             can_query_closed = (
                 self.total_steps - self.last_closed >= self.closed_cooldown
             )
+            # can_query_closed = False
 
             if can_query_open:
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
