@@ -28,7 +28,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -938,15 +938,18 @@ class DQNAgent:
         with torch.no_grad():
             q_values = self.model(*self.state)
 
-        p = random.random()
-        if p < self.p_open:
-            self.current_hint, _ = self.query_llm("open", self.env.task, obs, info)
-            self.open_llm_queries += 1
-            updated_hint = True
-        elif p < self.p_open + self.p_closed:
-            self.current_hint, _ = self.query_llm("closed", self.env.task, obs, info)
-            self.closed_llm_queries += 1
-            updated_hint = True
+        if USE_LLMS:
+            p = random.random()
+            if p < self.p_open:
+                self.current_hint, _ = self.query_llm("open", self.env.task, obs, info)
+                self.open_llm_queries += 1
+                updated_hint = True
+            elif p < self.p_open + self.p_closed:
+                self.current_hint, _ = self.query_llm(
+                    "closed", self.env.task, obs, info
+                )
+                self.closed_llm_queries += 1
+                updated_hint = True
 
         if updated_hint:
             self.update_state(obs, info)
