@@ -31,7 +31,11 @@ class Logger:
 
 
 def load_agent(
-    checkpoint_path=None, env_name="homegrid-task", episodes=0, use_gpu=True
+    checkpoint_path=None,
+    env_name="homegrid-task",
+    episodes=0,
+    use_gpu=True,
+    training=False,
 ):
     """
     Creates a new DQNAgent instance and loads from checkpoint if provided.
@@ -39,8 +43,9 @@ def load_agent(
     Args:
         checkpoint_path: Path to checkpoint file (can be a specific path or episode number)
         env_name: Name of the environment
-        episodes: Number of episodes to train
+        episodes: Number of episodes to train (0 means no training)
         use_gpu: Whether to use GPU acceleration (if available)
+        training: If True, always use the latest pickle file for integer checkpoints (unless episodes=0)
 
     Returns:
         Loaded agent
@@ -56,18 +61,48 @@ def load_agent(
     loaded_episode = 0
 
     if checkpoint_path is not None:
-        # Handle episode numbers (use pickle)
+        # Handle episode numbers
         if isinstance(checkpoint_path, int):
             loaded_episode = checkpoint_path
-            pickle_path = os.path.join(training_dir, "latest_agent.pkl")
-            print(f"Loading full agent from: {pickle_path}")
-            with open(pickle_path, "rb") as f:
-                agent = pickle.load(f)
-            print(f"Loaded agent with pickle with epsilon {agent.epsilon:.4f}")
-            # Set the episode number to ensure proper continuation
-            print(f"Episode number: {agent.episode}, now set to: {loaded_episode}")
-            agent.episode = loaded_episode
-            return agent
+            # For training with non-zero episodes, always use pickle to get most recent state
+            # For testing or zero episodes, use the specific checkpoint file
+            if training and episodes > 0:
+                # Always use the latest pickle for active training
+                pickle_path = os.path.join(training_dir, "latest_agent.pkl")
+                print(f"Loading full agent from: {pickle_path} (for training)")
+                with open(pickle_path, "rb") as f:
+                    agent = pickle.load(f)
+                print(f"Loaded agent with pickle with epsilon {agent.epsilon:.4f}")
+                # Set the episode number to ensure proper continuation
+                print(f"Episode number: {agent.episode}, now set to: {loaded_episode}")
+                agent.episode = loaded_episode
+                return agent
+            else:
+                # For testing or zero episodes, use the specific checkpoint file
+                checkpoint_file = os.path.join(
+                    training_dir, f"model_checkpoint_{checkpoint_path}.pth"
+                )
+                if os.path.exists(checkpoint_file):
+                    # If the specific checkpoint file exists, use it directly
+                    checkpoint_path = checkpoint_file
+                    print(
+                        f"Loading checkpoint from: {checkpoint_path} ({'for testing' if not training else 'episodes=0'})"
+                    )
+                else:
+                    # Fall back to pickle if no checkpoint file exists
+                    pickle_path = os.path.join(training_dir, "latest_agent.pkl")
+                    print(
+                        f"Loading full agent from: {pickle_path} (specific checkpoint not found)"
+                    )
+                    with open(pickle_path, "rb") as f:
+                        agent = pickle.load(f)
+                    print(f"Loaded agent with pickle with epsilon {agent.epsilon:.4f}")
+                    # Set the episode number to ensure proper continuation
+                    print(
+                        f"Episode number: {agent.episode}, now set to: {loaded_episode}"
+                    )
+                    agent.episode = loaded_episode
+                    return agent
         elif str(checkpoint_path) == "best":
             checkpoint_path = os.path.join(training_dir, "best_model.pth")
         elif str(checkpoint_path) == "final":
@@ -150,7 +185,7 @@ def train_agent(num_episodes=1000, continue_from=None, save_interval=100, use_gp
         torch.set_float32_matmul_precision("high")
 
     # Load agent, continuing from checkpoint if specified
-    agent = load_agent(continue_from, use_gpu=use_gpu)
+    agent = load_agent(continue_from, use_gpu=use_gpu, training=True)
     agent.checkpoint_interval = save_interval  # Set custom checkpoint interval
 
     # Log training metadata with hardware info
@@ -267,7 +302,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
         torch.cuda.empty_cache()
 
     # Load the agent from checkpoint
-    agent = load_agent(checkpoint, use_gpu=use_gpu)
+    agent = load_agent(checkpoint, use_gpu=use_gpu, training=False)
 
     # Run testing
     print(f"\nTesting agent for {num_episodes} episodes...")
