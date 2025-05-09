@@ -436,7 +436,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default=250,
+        default=5,
         help='Path to the model or "best" for best model',
     )
     parser.add_argument(
@@ -451,7 +451,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=int,
-        default=70,
+        default=16,
         help="Checkpoint folder number (e.g., 13 for checkpoints13)",
     )
 
