@@ -72,6 +72,8 @@ def load_agent(
                 print(f"Loading full agent from: {pickle_path} (for training)")
                 with open(pickle_path, "rb") as f:
                     agent = pickle.load(f)
+                    agent.open_llm_queries = 0
+                    agent.closed_llm_queries = 0
                 print(f"Loaded agent with pickle with epsilon {agent.epsilon:.4f}")
                 # Set the episode number to ensure proper continuation
                 print(f"Episode number: {agent.episode}, now set to: {loaded_episode}")
@@ -309,7 +311,11 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print(f"Using device: {agent.device}")
 
     start_time = time.time()
+    prev_total_steps = agent.total_steps
     average_reward, success_rate = agent.test(episodes=num_episodes, render=render)
+    print(f"Open LLM Queries: {agent.open_llm_queries}")
+    print(f"Closed LLM Queries: {agent.closed_llm_queries}")
+    print(f"Steps {agent.total_steps - prev_total_steps}")
     test_time = time.time() - start_time
 
     # Calculate statistics
@@ -760,6 +766,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+checkpoint_dir = "checkpoints75"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 checkpoint_dir = "checkpoints73"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
@@ -869,22 +876,22 @@ if __name__ == "__main__":
 
     # train_agent(
     #     num_episodes=10_000,
-    #     continue_from=8_250,
+    #     # continue_from=8_250,
     #     save_interval=250,
     #     use_gpu=True,
     # )
 
-    # evaluate_checkpoints(
-    #     checkpoint_range=(
-    #         1_000,
-    #         10_000,
-    #         1_000,
-    #     ),
-    #     test_episodes=200,
-    #     use_gpu=True,
-    # )
+    evaluate_checkpoints(
+        checkpoint_range=(
+            1_000,
+            10_000,
+            1_000,
+        ),
+        test_episodes=200,
+        use_gpu=True,
+    )
 
-    test_agent(checkpoint=3000, num_episodes=1000, use_gpu=True)
+    test_agent(checkpoint=3000, num_episodes=2000, use_gpu=True)
 
     # train_agent(
     #     num_episodes=14000,
