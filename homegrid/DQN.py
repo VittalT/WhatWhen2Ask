@@ -942,7 +942,7 @@ class DQNAgent:
             can_query_closed = (
                 self.total_steps - self.last_closed >= self.closed_cooldown
             )
-            # can_query_closed = False
+            can_query_closed = False
 
             if can_query_open:
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
