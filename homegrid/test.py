@@ -397,9 +397,16 @@ def evaluate_checkpoints(
         checkpoint_dir=checkpoint_dir
     )  # Create a new agent with random initialization
     start_time = time.time()
-    baseline_original_reward, baseline_shaped_reward = baseline_agent.test(
-        episodes=test_episodes
-    )
+    (
+        baseline_original_reward,
+        baseline_shaped_reward,
+        baseline_success_rate,
+        baseline_avg_steps,
+        baseline_open_query_rate,
+        baseline_closed_query_rate,
+        baseline_open_acceptance_rate,
+        baseline_closed_acceptance_rate,
+    ) = baseline_agent.test(episodes=test_episodes)
     baseline_time = time.time() - start_time
     print(
         f"Baseline original reward: {baseline_original_reward:.4f}, Shaped reward: {baseline_shaped_reward:.4f} (time: {baseline_time:.1f}s)"
@@ -407,6 +414,12 @@ def evaluate_checkpoints(
     results[0] = {
         "original_reward": baseline_original_reward,
         "shaped_reward": baseline_shaped_reward,
+        "success_rate": baseline_success_rate,
+        "avg_steps": baseline_avg_steps,
+        "open_query_rate": baseline_open_query_rate,
+        "closed_query_rate": baseline_closed_query_rate,
+        "open_acceptance_rate": baseline_open_acceptance_rate,
+        "closed_acceptance_rate": baseline_closed_acceptance_rate,
     }
 
     # Test each checkpoint - load from stored checkpoint files, not using the pickle file
@@ -439,7 +452,16 @@ def evaluate_checkpoints(
 
         # Run test
         checkpoint_start = time.time()
-        original_reward, shaped_reward = agent.test(episodes=test_episodes)
+        (
+            original_reward,
+            shaped_reward,
+            success_rate,
+            avg_steps,
+            open_query_rate,
+            closed_query_rate,
+            open_acceptance_rate,
+            closed_acceptance_rate,
+        ) = agent.test(episodes=test_episodes)
         checkpoint_time = time.time() - checkpoint_start
         total_eval_time += checkpoint_time
 
@@ -447,6 +469,12 @@ def evaluate_checkpoints(
         results[episode] = {
             "original_reward": original_reward,
             "shaped_reward": shaped_reward,
+            "success_rate": success_rate,
+            "avg_steps": avg_steps,
+            "open_query_rate": open_query_rate,
+            "closed_query_rate": closed_query_rate,
+            "open_acceptance_rate": open_acceptance_rate,
+            "closed_acceptance_rate": closed_acceptance_rate,
         }
         checkpoints_tested += 1
 
@@ -475,29 +503,43 @@ def evaluate_checkpoints(
 
         # Run test
         best_start = time.time()
-        best_original_reward, best_shaped_reward = best_agent.test(
-            episodes=test_episodes
-        )
+        (
+            best_original_reward,
+            best_shaped_reward,
+            best_success_rate,
+            best_avg_steps,
+            best_open_query_rate,
+            best_closed_query_rate,
+            best_open_acceptance_rate,
+            best_closed_acceptance_rate,
+        ) = best_agent.test(episodes=test_episodes)
         best_time = time.time() - best_start
         total_eval_time += best_time
 
         results["best"] = {
             "original_reward": best_original_reward,
             "shaped_reward": best_shaped_reward,
+            "success_rate": best_success_rate,
+            "avg_steps": best_avg_steps,
+            "open_query_rate": best_open_query_rate,
+            "closed_query_rate": best_closed_query_rate,
+            "open_acceptance_rate": best_open_acceptance_rate,
+            "closed_acceptance_rate": best_closed_acceptance_rate,
         }
         print(
             f"Best model original reward: {best_original_reward:.4f}, Shaped reward: {best_shaped_reward:.4f} (time: {best_time:.1f}s)"
         )
 
-    # Create learning curve plots for both reward and success rate
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    # Create learning curve plots for rewards and success rate
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15))
     plt.style.use("ggplot")
 
     episodes = [e for e in results.keys() if isinstance(e, int)]
     original_rewards = [results[e]["original_reward"] for e in episodes]
     shaped_rewards = [results[e]["shaped_reward"] for e in episodes]
+    success_rates = [results[e]["success_rate"] for e in episodes]
 
-    # Plot rewards
+    # Plot original rewards
     ax1.plot(
         episodes, original_rewards, "o-", linewidth=2, markersize=8, label="Checkpoints"
     )
@@ -557,6 +599,39 @@ def evaluate_checkpoints(
     ax2.legend(fontsize=12)
     ax2.grid(True, alpha=0.3)
 
+    # Plot success rates
+    ax3.plot(
+        episodes,
+        success_rates,
+        "o-",
+        linewidth=2,
+        markersize=8,
+        color="green",
+        label="Checkpoints",
+    )
+    ax3.axhline(
+        y=results[0]["success_rate"],
+        color="r",
+        linestyle="--",
+        linewidth=2,
+        label="Baseline (Untrained)",
+    )
+
+    if "best" in results:
+        ax3.axhline(
+            y=results["best"]["success_rate"],
+            color="g",
+            linestyle="--",
+            linewidth=2,
+            label="Best Model",
+        )
+
+    ax3.set_xlabel("Training Episodes", fontsize=14)
+    ax3.set_ylabel("Success Rate (%)", fontsize=14)
+    ax3.set_title("Success Rate: Test Performance vs Training Episodes", fontsize=16)
+    ax3.legend(fontsize=12)
+    ax3.grid(True, alpha=0.3)
+
     plt.tight_layout()
 
     # Add annotations for key points
@@ -574,6 +649,15 @@ def evaluate_checkpoints(
             ax2.annotate(
                 f"{shaped_rewards[i]:.3f}",
                 (episode, shaped_rewards[i]),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.3", fc="yellow", alpha=0.3),
+            )
+            ax3.annotate(
+                f"{success_rates[i]:.1f}%",
+                (episode, success_rates[i]),
                 textcoords="offset points",
                 xytext=(0, 10),
                 ha="center",
@@ -622,6 +706,12 @@ def evaluate_checkpoints(
             str(k): {
                 "original_reward": float(v["original_reward"]),
                 "shaped_reward": float(v["shaped_reward"]),
+                "success_rate": float(v["success_rate"]),
+                "avg_steps": float(v["avg_steps"]),
+                "open_query_rate": float(v["open_query_rate"]),
+                "closed_query_rate": float(v["closed_query_rate"]),
+                "open_acceptance_rate": float(v["open_acceptance_rate"]),
+                "closed_acceptance_rate": float(v["closed_acceptance_rate"]),
             }
             for k, v in results.items()
         },
@@ -699,14 +789,30 @@ def benchmark_performance(train_episodes=20, test_episodes=100, use_gpu=True):
     # Testing benchmark
     print(f"\nBenchmarking testing for {test_episodes} episodes...")
     test_start = time.time()
-    benchmark_agent.test(episodes=test_episodes)
+    (
+        avg_reward,
+        avg_shaped_reward,
+        success_rate,
+        avg_steps,
+        open_query_rate,
+        closed_query_rate,
+        open_acceptance_rate,
+        closed_acceptance_rate,
+    ) = benchmark_agent.test(episodes=test_episodes)
     test_time = time.time() - test_start
     avg_test_time = test_time / test_episodes
     results["test_time"] = test_time
     results["avg_test_time"] = avg_test_time
+    results["test_success_rate"] = success_rate
+    results["test_avg_reward"] = avg_reward
+    results["test_avg_shaped_reward"] = avg_shaped_reward
+    results["test_avg_steps"] = avg_steps
 
     print(f"Testing completed in {test_time:.2f} seconds")
     print(f"Average time per test episode: {avg_test_time:.3f} seconds")
+    print(f"Success rate: {success_rate:.2f}%")
+    print(f"Average reward: {avg_reward:.4f}")
+    print(f"Average shaped reward: {avg_shaped_reward:.4f}")
 
     # Extrapolation estimates
     print("\nExtrapolated runtime estimates:")
@@ -984,10 +1090,10 @@ if __name__ == "__main__":
 
     #     # 4) test
     #     print(f"Testing for {TEST_EPISODES} episodes")
-    #     avg_reward, avg_shaped = agent.test(episodes=TEST_EPISODES)
+    #     avg_reward, avg_shaped_reward, success_rate, avg_steps, open_query_rate, closed_query_rate, open_acceptance_rate, closed_acceptance_rate = agent.test(episodes=TEST_EPISODES)
 
     #     print(
-    #         f"RESULT {run_tag} → avg orig reward: {avg_reward:.3f}, avg shaped: {avg_shaped:.3f}"
+    #         f"RESULT {run_tag} → avg orig reward: {avg_reward:.3f}, avg shaped: {avg_shaped_reward:.3f}, success rate: {success_rate:.1f}%"
     #     )
 
     # print("\n=== SWEEP COMPLETE ===")
