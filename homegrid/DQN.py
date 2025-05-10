@@ -28,7 +28,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = True
+USE_LLMS = False
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -186,6 +186,12 @@ class DQNAgent:
         self.max_replay_buffer_size = 100_000
         self.target_update_freq = 5_000
 
+        # LLM query tracking
+        self.open_llm_queries = 0
+        self.closed_llm_queries = 0
+        self.accepted_open_queries = 0
+        self.accepted_closed_queries = 0
+
         # Prioritized experience replay parameters
         self.use_per = True  # Can set to False if computationally expensive
         self.per_alpha = 0.6
@@ -266,8 +272,7 @@ class DQNAgent:
         self.open_cooldown = 20
         self.closed_cooldown = 500
         self.last_closed = -200
-        self.open_llm_queries = 0
-        self.closed_llm_queries = 0
+        self.last_closed_confidence = 0
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -934,7 +939,6 @@ class DQNAgent:
 
         # Calculate uncertainty using pre-computed Q-values
         dqn_confidence = self.confidence_score(q_values)
-        # print(f"DQN Confidence: {dqn_confidence:.4f}")
 
         # Confidence-Based VLM Query Policy
         if USE_LLMS and dqn_confidence < self.dqn_threshold:
@@ -942,25 +946,20 @@ class DQNAgent:
             can_query_closed = (
                 self.total_steps - self.last_closed >= self.closed_cooldown
             )
-            can_query_closed = False
+            # can_query_closed = False
 
             if can_query_open:
                 hint, confidence = self.query_llm("open", self.env.task, obs, info)
-                # print(
-                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.current_step}, Open Hint: {hint}, Confidence: {confidence:.4f}"
-                # )
                 self.last_open = self.current_step
                 self.open_llm_queries += 1
 
                 if confidence > max(self.open_threshold, self.last_closed_confidence):
                     self.current_hint = hint
                     updated_hint = True
+                    self.accepted_open_queries += 1
 
             if not updated_hint and can_query_closed:
                 hint, confidence = self.query_llm("closed", self.env.task, obs, info)
-                # print(
-                #     f"Episode: {self.episode}, Task: {self.env.task}, Step: {self.total_steps}, Closed Hint: {hint}, Confidence: {confidence:.4f}"
-                # )
                 self.last_closed = self.total_steps
                 self.last_closed_confidence = confidence
                 self.closed_llm_queries += 1
@@ -968,6 +967,7 @@ class DQNAgent:
                 if confidence > self.closed_threshold:
                     self.current_hint = hint
                     updated_hint = True
+                    self.accepted_closed_queries += 1
 
         if updated_hint:
             self.update_state(obs, info)
@@ -1643,20 +1643,23 @@ class DQNAgent:
         total_rewards = []  # Original rewards
         shaped_rewards = []  # Shaped rewards
         steps_to_success = []
-        task_success_rates = {}
+        episode_steps = []  # Track steps per episode
+        total_steps = 0  # Track total steps
+        success_count = 0  # Track total successes
+
+        # Reset all LLM query counters at start of testing
+        self.open_llm_queries = 0
+        self.closed_llm_queries = 0
+        self.accepted_open_queries = 0
+        self.accepted_closed_queries = 0
 
         for episode in range(1, episodes + 1):
             # Use reset method which already calls env.reset
             obs, info = self.reset()
 
-            # Track current task
-            current_task = self.env.task
-            if current_task not in task_success_rates:
-                task_success_rates[current_task] = {"attempts": 0, "successes": 0}
-            task_success_rates[current_task]["attempts"] += 1
-
             total_reward = 0  # Original reward
             total_shaped_reward = 0  # Shaped reward
+            episode_step_count = 0  # Track steps in this episode
 
             for step in range(self.env.max_steps):
                 action, cost = self.choose_action(obs, info, testing=True)
@@ -1673,11 +1676,11 @@ class DQNAgent:
                 # Track both types of rewards
                 total_reward += original_reward
                 total_shaped_reward += shaped_reward
+                episode_step_count += 1
 
                 if total_reward >= 1:
-                    steps_to_success.append(step)
-                    # Track task-specific success
-                    task_success_rates[current_task]["successes"] += 1
+                    steps_to_success.append(episode_step_count)
+                    success_count += 1
 
                 if render:
                     self.env.render()
@@ -1688,88 +1691,37 @@ class DQNAgent:
             # Record results
             total_rewards.append(total_reward)
             shaped_rewards.append(total_shaped_reward)
-
-            # Log progress periodically
-            if episode % 1000 == 0 or episode == episodes:
-                # Calculate success rate properly using task-specific attempts
-                success_rate = (
-                    task_success_rates[current_task]["successes"]
-                    / task_success_rates[current_task]["attempts"]
-                ) * 100
-                avg_steps = np.mean(steps_to_success) if steps_to_success else "N/A"
-                print(
-                    f"Test Episode {episode}/{episodes}, "
-                    f"Original Reward: {total_reward:.4f}, "
-                    f"Shaped Reward: {total_shaped_reward:.4f}, "
-                    f"Success Rate: {success_rate:.1f}%, "
-                    f"Avg Steps to Success: {avg_steps}"
-                )
+            episode_steps.append(episode_step_count)
+            total_steps += episode_step_count
 
         # Calculate final metrics
         average_reward = sum(total_rewards) / max(1, len(total_rewards))
         average_shaped_reward = sum(shaped_rewards) / max(1, len(shaped_rewards))
+        average_steps = sum(episode_steps) / max(1, len(episode_steps))
 
-        # Calculate success rate from task_success_rates
-        success_count = sum(stats["successes"] for stats in task_success_rates.values())
-        attempt_count = sum(stats["attempts"] for stats in task_success_rates.values())
-        final_success_rate = (success_count / max(1, attempt_count)) * 100
+        # Calculate success rate directly from success count
+        success_rate = (success_count / max(1, episodes)) * 100
 
-        # Calculate average steps to success
-        avg_steps_to_success = np.mean(steps_to_success) if steps_to_success else "N/A"
+        # Calculate LLM query metrics using final query counts
+        open_query_rate = (self.open_llm_queries / max(1, total_steps)) * 100
+        closed_query_rate = (self.closed_llm_queries / max(1, total_steps)) * 100
+        open_acceptance_rate = (
+            self.accepted_open_queries / max(1, self.open_llm_queries)
+        ) * 100
+        closed_acceptance_rate = (
+            self.accepted_closed_queries / max(1, self.closed_llm_queries)
+        ) * 100
 
-        print(f"\nTest Results over {len(total_rewards)} episodes:")
-        print(f"  Average Original Reward: {average_reward:.4f}")
-        print(f"  Average Shaped Reward: {average_shaped_reward:.4f}")
-        print(f"  Success Rate: {final_success_rate:.1f}%")
-        print(f"  Average Steps to Success: {avg_steps_to_success}")
-
-        # Print task-specific success rates
-        print("\nTask-specific success rates:")
-        for task, stats in task_success_rates.items():
-            task_success_rate = (
-                (stats["successes"] / stats["attempts"]) * 100
-                if stats["attempts"] > 0
-                else 0
-            )
-            print(
-                f"  {task}: {task_success_rate:.1f}% ({stats['successes']}/{stats['attempts']})"
-            )
-
-        # Save test results to a file
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = os.path.join(self.testing_dir, f"test_results_{timestamp}.json")
-
-        results = {
-            "average_original_reward": float(average_reward),
-            "average_shaped_reward": float(average_shaped_reward),
-            "success_rate": float(final_success_rate),
-            "average_steps_to_success": (
-                float(avg_steps_to_success)
-                if isinstance(avg_steps_to_success, (int, float))
-                else None
-            ),
-            "task_success_rates": {
-                task: {
-                    "success_rate": (
-                        (stats["successes"] / stats["attempts"]) * 100
-                        if stats["attempts"] > 0
-                        else 0
-                    ),
-                    "successes": stats["successes"],
-                    "attempts": stats["attempts"],
-                }
-                for task, stats in task_success_rates.items()
-            },
-            "timestamp": timestamp,
-            "episodes": episodes,
-        }
-
-        with open(results_file, "w") as f:
-            json.dump(results, f, indent=4)
-
-        print(f"\nTest results saved to: {results_file}")
-
-        return average_reward, average_shaped_reward
+        return (
+            average_reward,
+            average_shaped_reward,
+            success_rate,
+            average_steps,
+            open_query_rate,
+            closed_query_rate,
+            open_acceptance_rate,
+            closed_acceptance_rate,
+        )
 
     # Special methods for pickle support
     def __getstate__(self):

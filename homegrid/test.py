@@ -311,11 +311,16 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print(f"Using device: {agent.device}")
 
     start_time = time.time()
-    prev_total_steps = agent.total_steps
-    average_reward, success_rate = agent.test(episodes=num_episodes, render=render)
-    print(f"Open LLM Queries: {agent.open_llm_queries}")
-    print(f"Closed LLM Queries: {agent.closed_llm_queries}")
-    print(f"Steps {agent.total_steps - prev_total_steps}")
+    (
+        average_reward,
+        average_shaped_reward,
+        success_rate,
+        average_steps,
+        open_query_rate,
+        closed_query_rate,
+        open_acceptance_rate,
+        closed_acceptance_rate,
+    ) = agent.test(episodes=num_episodes, render=render)
     test_time = time.time() - start_time
 
     # Calculate statistics
@@ -325,10 +330,16 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     print("TESTING RESULTS")
     print("=" * 40)
     print(f"Total episodes: {num_episodes}")
-    print(f"Testing time: {test_time:.1f} seconds ({test_time/60:.1f} minutes)")
-    print(f"Time per episode: {time_per_episode:.3f} seconds")
-    print(f"Average reward: {average_reward:.4f}")
-    print(f"Success rate: {success_rate:.1f}%")
+    print(f"Testing time: {test_time:.4g} seconds ({test_time/60:.4g} minutes)")
+    print(f"Average shaped reward: {average_shaped_reward:.4g}\n")
+    print(f"Success rate: {success_rate:.4g}%")
+    print(f"Average raw reward: {average_reward:.4g}")
+    print(f"Average steps per episode: {average_steps:.4g}")
+    print(f"Time per episode: {time_per_episode:.4g} seconds")
+    print(f"Open LLM query rate: {open_query_rate:.4g}%")
+    print(f"Closed LLM query rate: {closed_query_rate:.4g}%")
+    print(f"Open LLM acceptance rate: {open_acceptance_rate:.4g}%")
+    print(f"Closed LLM acceptance rate: {closed_acceptance_rate:.4g}%")
     print("=" * 40)
 
     # Save test results with timestamp
@@ -337,10 +348,16 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
     results = {
         "checkpoint": str(checkpoint),
         "num_episodes": num_episodes,
-        "average_reward": float(average_reward),
-        "success_rate": float(success_rate),
-        "test_time_seconds": float(test_time),
-        "time_per_episode": float(time_per_episode),
+        "average_raw_reward": float(f"{average_reward:.4g}"),
+        "average_shaped_reward": float(f"{average_shaped_reward:.4g}"),
+        "success_rate": float(f"{success_rate:.4g}"),
+        "average_steps": float(f"{average_steps:.4g}"),
+        "open_query_rate": float(f"{open_query_rate:.4g}"),
+        "closed_query_rate": float(f"{closed_query_rate:.4g}"),
+        "open_acceptance_rate": float(f"{open_acceptance_rate:.4g}"),
+        "closed_acceptance_rate": float(f"{closed_acceptance_rate:.4g}"),
+        "test_time_seconds": float(f"{test_time:.4g}"),
+        "time_per_episode": float(f"{time_per_episode:.4g}"),
         "device": str(agent.device),
         "timestamp": test_timestamp,
     }
@@ -350,7 +367,7 @@ def test_agent(checkpoint="best", num_episodes=1000, render=False, use_gpu=True)
 
     print(f"Test results saved to: {result_path}")
 
-    return average_reward, success_rate
+    return results
 
 
 def evaluate_checkpoints(
@@ -766,7 +783,7 @@ num_workers = min(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-checkpoint_dir = "checkpoints74"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
+checkpoint_dir = "checkpoints72"  ### CHANGE THIS TO THE CORRECT CHECKPOINT DIRECTORY
 
 
 os.makedirs(checkpoint_dir, exist_ok=True)
@@ -873,25 +890,25 @@ if __name__ == "__main__":
     # OPTION 4: Evaluate multiple checkpoints to create a learning curve
     # Uncomment to use:
 
-    train_agent(
-        num_episodes=10_000,
-        # continue_from=8_250,
-        save_interval=250,
-        use_gpu=True,
-    )
+    # train_agent(
+    #     num_episodes=10_000,
+    #     # continue_from=8_250,
+    #     save_interval=250,
+    #     use_gpu=True,
+    # )
 
-    evaluate_checkpoints(
-        checkpoint_range=(
-            1_000,
-            10_000,
-            1_000,
-        ),
-        test_episodes=200,
-        use_gpu=True,
-    )
+    # evaluate_checkpoints(
+    #     checkpoint_range=(
+    #         1_000,
+    #         10_000,
+    #         1_000,
+    #     ),
+    #     test_episodes=200,
+    #     use_gpu=True,
+    # )
 
-    test_agent(checkpoint="best", num_episodes=2000, use_gpu=True)
-    test_agent(checkpoint=3000, num_episodes=2000, use_gpu=True)
+    # test_agent(checkpoint="best", num_episodes=2000, use_gpu=True)
+    test_agent(checkpoint=3000, num_episodes=100, use_gpu=True)
 
     # train_agent(
     #     num_episodes=14000,
