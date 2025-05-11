@@ -28,7 +28,7 @@ HINT_EMBED_DIM = (
     SENTENCE_TRANSFORMER_DIM + 1 + 10
 )  # all-MiniLM-L6-v2 embedding dimension + 10 for multihot encoding + 1 for flag
 
-USE_LLMS = False
+USE_LLMS = True
 
 _open_llm_helper = None
 _closed_llm_helper = None
@@ -272,7 +272,6 @@ class DQNAgent:
         self.open_cooldown = 20
         self.closed_cooldown = 500
         self.last_closed = -200
-        self.last_closed_confidence = 0
 
         # Checkpoint interval
         self.checkpoint_interval = 100
@@ -916,8 +915,10 @@ class DQNAgent:
         llm_obs, llm_info = self.filter_state(obs, info)
         if type == "open":
             hint, confidence = self.open_llm.query_llm(task, llm_obs, llm_info)
+            self.cur_open_confidence = confidence
         elif type == "closed":
             hint, confidence = self.closed_llm.query_llm(task, llm_obs, llm_info)
+            self.cur_closed_confidence = confidence
         return hint, confidence
 
     def choose_action(self, obs, info, testing=False):
@@ -956,17 +957,18 @@ class DQNAgent:
                 if confidence > max(self.open_threshold, self.last_closed_confidence):
                     self.current_hint = hint
                     updated_hint = True
+                    self.last_closed_confidence = 0
                     self.accepted_open_queries += 1
 
             if not updated_hint and can_query_closed:
                 hint, confidence = self.query_llm("closed", self.env.task, obs, info)
                 self.last_closed = self.total_steps
-                self.last_closed_confidence = confidence
                 self.closed_llm_queries += 1
 
                 if confidence > self.closed_threshold:
                     self.current_hint = hint
                     updated_hint = True
+                    self.last_closed_confidence = confidence
                     self.accepted_closed_queries += 1
 
         if updated_hint:

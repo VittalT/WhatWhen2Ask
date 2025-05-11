@@ -11,6 +11,7 @@ from tokenizers import Tokenizer
 import cv2
 from pprint import pprint
 import torch
+import textwrap
 
 from homegrid.window import Window
 from homegrid.DQN import DQNAgent
@@ -26,6 +27,7 @@ reward_components = {
     "pot_carrying": 0,
     "pot_expl": 0,
     "pot_time": 0,
+    "pot_blocked": 0,
     "potential": 0,
     "shaped_reward": 0,
     "base_reward": 0,
@@ -65,76 +67,77 @@ def update_reward_visualization():
     # Clear the figure
     reward_fig.clear()
 
-    # Create subplot for each component
-    gs = reward_fig.add_gridspec(4, 2, hspace=0.4)
+    # Create subplot for each component with more space between
+    # gs = reward_fig.add_gridspec(4, 2, hspace=0.7, wspace=0.3)  # more space
+    gs = reward_fig.add_gridspec(4, 2, hspace=1.2, wspace=0.3)
 
-    # Subplot 1: Distance potential
+    # Subplot 1: Distance
     ax1 = reward_fig.add_subplot(gs[0, 0])
     ax1.plot(reward_history["pot_dist"], "r-")
-    ax1.set_title("Distance (-0.05 * pot_dist)")
+    ax1.set_title("Distance", fontsize=20)
     ax1.set_ylim(
         min(min(reward_history["pot_dist"]) - 0.1, -0.1),
         max(max(reward_history["pot_dist"]) + 0.1, 0.1),
     )
 
-    # Subplot 2: Orientation potential
+    # Subplot 2: Orientation
     ax2 = reward_fig.add_subplot(gs[0, 1])
     ax2.plot(reward_history["pot_orientation"], "g-")
-    ax2.set_title("Orientation (0.1 * pot_orientation)")
+    ax2.set_title("Orientation", fontsize=20)
     ax2.set_ylim(
         min(min(reward_history["pot_orientation"]) - 0.1, -0.1),
         max(max(reward_history["pot_orientation"]) + 0.1, 0.1),
     )
 
-    # Subplot 3: Carrying potential
+    # Subplot 3: Carrying
     ax3 = reward_fig.add_subplot(gs[1, 0])
     ax3.plot(reward_history["pot_carrying"], "b-")
-    ax3.set_title("Carrying (0.5 * pot_carrying)")
+    ax3.set_title("Carrying", fontsize=20)
     ax3.set_ylim(
         min(min(reward_history["pot_carrying"]) - 0.1, -0.1),
         max(max(reward_history["pot_carrying"]) + 0.1, 0.1),
     )
 
-    # Subplot 4: Exploration potential
+    # Subplot 4: Exploration
     ax4 = reward_fig.add_subplot(gs[1, 1])
     ax4.plot(reward_history["pot_expl"], "c-")
-    ax4.set_title("Exploration (0.025 * pot_expl)")
+    ax4.set_title("Exploration", fontsize=20)
     ax4.set_ylim(
         min(min(reward_history["pot_expl"]) - 0.1, -0.1),
         max(max(reward_history["pot_expl"]) + 0.1, 0.1),
     )
 
-    # Subplot 5: Time penalty
+    # Subplot 5: Time
     ax5 = reward_fig.add_subplot(gs[2, 0])
     ax5.plot(reward_history["pot_time"], "m-")
-    ax5.set_title("Time (-0.025 * pot_time)")
+    ax5.set_title("Time", fontsize=20)
     ax5.set_ylim(
         min(min(reward_history["pot_time"]) - 0.1, -0.1),
         max(max(reward_history["pot_time"]) + 0.1, 0.1),
     )
 
-    # Subplot 6: Overall potential
+    # Subplot 6: Blocking Penalty
     ax6 = reward_fig.add_subplot(gs[2, 1])
-    ax6.plot(reward_history["potential"], "k-")
-    ax6.set_title("Total Potential")
+    ax6.plot(reward_history["pot_blocked"], "r-")
+    ax6.set_title("Blocking", fontsize=20)
     ax6.set_ylim(
-        min(min(reward_history["potential"]) - 0.1, -0.1),
-        max(max(reward_history["potential"]) + 0.1, 0.1),
+        min(min(reward_history["pot_blocked"]) - 0.1, -0.1),
+        max(max(reward_history["pot_blocked"]) + 0.1, 0.1),
     )
 
-    # Subplot 7: Shaped reward
+    # Subplot 7: Shaped Reward
     ax7 = reward_fig.add_subplot(gs[3, 0])
     ax7.plot(reward_history["shaped_reward"], color="purple")
-    ax7.set_title("Shaped Reward")
+    ax7.set_title("Shaped Reward", fontsize=20)
     ax7.set_ylim(
         min(min(reward_history["shaped_reward"]) - 0.1, -0.1),
         max(max(reward_history["shaped_reward"]) + 0.1, 0.1),
     )
 
-    # Subplot 8: Base reward
+    # Subplot 8: Base Reward
     ax8 = reward_fig.add_subplot(gs[3, 1])
     ax8.plot(reward_history["base_reward"], color="orange")
-    ax8.set_title("Base Reward")
+    ax8.set_title("Raw Reward", fontsize=20)
     ax8.set_ylim(
         min(min(reward_history["base_reward"]) - 0.1, -0.1),
         max(max(reward_history["base_reward"]) + 0.1, 0.1),
@@ -180,6 +183,7 @@ def reset(env, window, seed=None, agent_view=False):
         "pot_carrying": 0,
         "pot_expl": 0,
         "pot_time": 0,
+        "pot_blocked": 0,
         "potential": 0,
         "shaped_reward": 0,
         "base_reward": 0,
@@ -241,6 +245,77 @@ def redraw_with_rewards(window, img):
     window.show_img(combined_img)
 
 
+def draw_info_panel_on_image(img, info, action, reward_components, env):
+    # Panel size in pixels (about 18 tiles wide, 5 tiles high)
+    box_w = 18 * 32  # 576 px
+    box_h = 5 * 32  # 160 px
+
+    # Room code to full name mapping
+    room_map = {"K": "kitchen", "D": "dining room", "L": "living room"}
+
+    # Prepare info text, one field per line
+    agent_info = info["symbolic_state"]["agent"]
+    step_count = env.step_cnt
+    room_code = agent_info["room"]
+    room = room_map.get(room_code, str(room_code))
+    direction = ["Right", "Down", "Left", "Up"][agent_info["dir"]]
+    carrying = agent_info["carrying"] or "nothing"
+    front_obj = info["symbolic_state"].get("front_obj", None) or "nothing"
+    action_names = {
+        0: "left",
+        1: "right",
+        2: "up",
+        3: "down",
+        4: "pickup",
+        5: "drop",
+        6: "get",
+        7: "pedal",
+        8: "grasp",
+        9: "lift",
+    }
+    action_str = action_names.get(action, str(action))
+    shaped_reward = reward_components["shaped_reward"]
+    actual_reward = reward_components["base_reward"]
+    task_str = env.task
+
+    lines = [
+        f"Step: {step_count}",
+        f"Room: {room}",
+        f"Dir: {direction}",
+        f"Action: {action_str}",
+        f"Carrying: {carrying}",
+        f"In front: {front_obj}",
+        f"Shaped: {shaped_reward:.4f}",
+        f"Actual: {actual_reward:.4f}",
+    ]
+
+    # Draw text lines with smaller font (no background box)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.45
+    font_color = (0, 0, 0)
+    thickness = 1
+    y0, dy = 24, 18
+    for i, line in enumerate(lines):
+        y = y0 + i * dy
+        if y > box_h - 8:
+            break
+        cv2.putText(
+            img, line, (10, y), font, font_scale, font_color, thickness, cv2.LINE_AA
+        )
+
+    # Draw the task at the bottom of the environment image, centered
+    h, w = img.shape[:2]
+    task_lines = textwrap.wrap("Task: " + task_str, width=70)
+    task_box_h = 22 * len(task_lines) + 10
+    task_box_y0 = h - task_box_h - 2
+    for i, line in enumerate(task_lines):
+        text_size = cv2.getTextSize(line, font, 0.48, 1)[0]
+        x = (w - text_size[0]) // 2
+        y = task_box_y0 + 20 + i * 22
+        cv2.putText(img, line, (x, y), font, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
+    return img
+
+
 def step(env, window, action, agent_view=False):
     global agent, prev_potential, reward_components
 
@@ -261,6 +336,7 @@ def step(env, window, action, agent_view=False):
         reward_components["pot_carrying"] = components["pot_carrying"]
         reward_components["pot_expl"] = components["pot_expl"]
         reward_components["pot_time"] = components["pot_time"]
+        reward_components["pot_blocked"] = components["pot_blocked"]
         reward_components["potential"] = current_potential
 
         # Calculate shaped reward using the formula: F(s,s') = γΦ(s') - Φ(s)
@@ -277,12 +353,7 @@ def step(env, window, action, agent_view=False):
         agent.current_step += 1
 
     # Print information about the state
-    token = tok.decode([obs["token"]])
     print(f"step={env.step_cnt}, reward={reward:.2f}")
-    print("Token: ", token)
-    print(
-        "Language: ", obs["log_language_info"] if "log_language_info" in obs else "None"
-    )
     print("Task: ", env.task)
     if agent:
         print("Shaped Reward Components:")
@@ -300,6 +371,32 @@ def step(env, window, action, agent_view=False):
             marker = "→" if i == current_objective_idx else " "
             print(f"  {marker} {i}: {obj['name']} at pos {obj['pos']}")
 
+        # Print blocking penalty information if available
+        if "pot_blocked" in components and components["pot_blocked"] > 0:
+            print(
+                f"BLOCKED MOVE DETECTED! Penalty: {components['weighted_blocked']:.4f}"
+            )
+
+        # Print LLM info if available
+        llm_type = getattr(agent, "last_llm_type", None)
+        llm_conf = getattr(agent, "last_llm_confidence", None)
+        llm_hint = getattr(agent, "current_hint", None)
+        llm_accepted = getattr(agent, "last_llm_accepted", None)
+        if llm_type or llm_conf or llm_hint:
+            print("LLM Assistance:")
+            print(f"  Type: {llm_type if llm_type is not None else 'N/A'}")
+            print(
+                f"  Confidence: {llm_conf:.4f}"
+                if llm_conf is not None
+                else "  Confidence: N/A"
+            )
+            print(
+                f"  Accepted: {'Yes' if llm_accepted else 'No'}"
+                if llm_accepted is not None
+                else "  Accepted: N/A"
+            )
+            print(f"  Hint: {llm_hint if llm_hint is not None else 'N/A'}")
+
     print("-" * 20)
     print("Info: ", obs["token_embed"].shape, obs["image"].shape)
     a = "obs, reward, terminated, truncated, info"
@@ -309,10 +406,15 @@ def step(env, window, action, agent_view=False):
     #     pprint(y)
     print(info)
 
-    window.set_caption(
-        f"r={reward:.2f} token_id={obs['token']} token="
-        f"{token} \ncurrent: {obs['log_language_info'][:50]}..."
+    # Draw info panel on the environment image
+    img = obs["image"] if agent_view else env.get_frame()
+    img_with_info = draw_info_panel_on_image(
+        img.copy(), info, action, reward_components, env
     )
+    redraw_with_rewards(window, img_with_info)
+
+    # Only show the task in the caption (or nothing)
+    window.set_caption("")
 
     if terminated:
         print(f"terminated! r={reward}")
@@ -323,9 +425,6 @@ def step(env, window, action, agent_view=False):
     elif reward_components["total_reward"] >= 1:
         print(f"success! r={reward}")
         reset(env, window)
-    else:
-        img = obs["image"] if agent_view else env.get_frame()
-        redraw_with_rewards(window, img)
 
 
 def key_handler(env, window, event, agent_view=False):

@@ -14,6 +14,7 @@ from tokenizers import Tokenizer
 from homegrid.LLM import LLMAgent
 import argparse
 import os
+import matplotlib.widgets as mwidgets
 
 tok = Tokenizer.from_pretrained("t5-small")
 
@@ -58,6 +59,7 @@ class AgentSimulator:
         self.ax_env = None
         self.ax_reward = None
         self.ax_info = None
+        self.ax_llm = None
 
         # Setup plot data
         self.steps = []
@@ -66,6 +68,13 @@ class AgentSimulator:
         self.cumulative_shaped = []
         self.cumulative_actual = []
         self.running = True
+
+        # LLM query tracking
+        self.last_llm_query = None
+        self.last_llm_hint = None
+        self.last_llm_confidence = None
+        self.last_llm_accepted = None
+        self.last_llm_type = None
 
         # Setup matplotlib
         for k in plt.rcParams:
@@ -152,8 +161,8 @@ class AgentSimulator:
 
     def setup_visualization(self):
         """Set up the matplotlib visualization."""
-        self.fig = plt.figure(figsize=(12, 8))
-        gs = GridSpec(2, 2, height_ratios=[3, 1])
+        self.fig = plt.figure(figsize=(12, 10))
+        gs = GridSpec(3, 2, height_ratios=[3, 1.5, 1])
 
         # Environment view
         self.ax_env = self.fig.add_subplot(gs[0, 0])
@@ -165,8 +174,13 @@ class AgentSimulator:
         self.ax_info.set_title("Agent Information")
         self.ax_info.axis("off")
 
+        # LLM information panel
+        self.ax_llm = self.fig.add_subplot(gs[1, :])
+        self.ax_llm.set_title("LLM Assistance")
+        self.ax_llm.axis("off")
+
         # Reward plot
-        self.ax_reward = self.fig.add_subplot(gs[1, :])
+        self.ax_reward = self.fig.add_subplot(gs[2, :])
         self.ax_reward.set_title("Rewards")
         self.ax_reward.set_xlabel("Steps")
         self.ax_reward.set_ylabel("Reward")
@@ -190,6 +204,35 @@ class AgentSimulator:
         self.fig.canvas.mpl_connect("key_press_event", self.key_handler)
         self.fig.canvas.mpl_connect("close_event", self.on_close)
 
+        # Add a continue button for LLM pause
+        self.llm_continue_button = None
+        self.llm_waiting = False
+        self.llm_continue_clicked = False
+        self._add_continue_button()
+
+    def _add_continue_button(self):
+        if self.llm_continue_button is not None:
+            self.llm_continue_button.ax.set_visible(False)
+        # Move button to lower right (x, y, width, height)
+        ax_button = self.fig.add_axes([0.82, 0.02, 0.15, 0.06])
+        self.llm_continue_button = mwidgets.Button(ax_button, "Continue")
+        self.llm_continue_button.on_clicked(self._on_continue_clicked)
+        self.llm_continue_button.ax.set_visible(False)
+
+    def _on_continue_clicked(self, event):
+        self.llm_continue_clicked = True
+        self.llm_waiting = False
+        self.llm_continue_button.ax.set_visible(False)
+        plt.draw()
+
+    def wait_for_continue(self):
+        self.llm_waiting = True
+        self.llm_continue_clicked = False
+        self.llm_continue_button.ax.set_visible(True)
+        plt.draw()
+        while not self.llm_continue_clicked:
+            plt.pause(0.1)
+
     def on_close(self, event):
         """Handle window close event."""
         plt.close("all")
@@ -202,7 +245,6 @@ class AgentSimulator:
 
         # Information to display
         task = self.env.task
-        token = tok.decode([obs["token"]])
         step_count = self.env.step_cnt
         carrying = info["symbolic_state"]["agent"]["carrying"] or "nothing"
         front_obj = info["symbolic_state"]["front_obj"] or "nothing"
@@ -235,7 +277,6 @@ class AgentSimulator:
             f"Action: {action_str}\n\n"
             f"Carrying: {carrying}\n"
             f"In front: {front_obj}\n\n"
-            f"Token: {token}\n\n"
             f"Shaped Reward: {shaped_reward:.4f}\n"
             f"Actual Reward: {actual_reward:.4f}\n"
         )
@@ -250,6 +291,92 @@ class AgentSimulator:
             transform=self.ax_info.transAxes,
             fontsize=10,
             bbox=dict(facecolor="white", alpha=0.8),
+        )
+
+    def update_llm_panel(self, dqn_confidence=None):
+        """Update the LLM information panel."""
+        self.ax_llm.clear()
+        self.ax_llm.axis("off")
+
+        # Get cooldown information from agent
+        open_cooldown = (
+            self.agent.open_cooldown if hasattr(self.agent, "open_cooldown") else 20
+        )
+        closed_cooldown = (
+            self.agent.closed_cooldown
+            if hasattr(self.agent, "closed_cooldown")
+            else 500
+        )
+        last_open = self.agent.last_open if hasattr(self.agent, "last_open") else -200
+        last_closed = (
+            self.agent.last_closed if hasattr(self.agent, "last_closed") else -200
+        )
+        current_step = (
+            self.agent.current_step if hasattr(self.agent, "current_step") else 0
+        )
+        total_steps = (
+            self.agent.total_steps if hasattr(self.agent, "total_steps") else 0
+        )
+
+        # Calculate remaining cooldowns
+        open_remaining = max(0, (last_open + open_cooldown) - current_step)
+        closed_remaining = max(0, (last_closed + closed_cooldown) - total_steps)
+
+        # DQN confidence and current hint
+        dqn_conf = (
+            f"DQN confidence: {dqn_confidence:.4f}"
+            if dqn_confidence is not None
+            else ""
+        )
+        current_hint = getattr(self.agent, "current_hint", None)
+        current_hint_str = (
+            f"Current hint: {current_hint}" if current_hint else "Current hint: None"
+        )
+
+        # Format cooldown information
+        cooldown_text = (
+            f"Open LLM cooldown: {open_remaining} steps remaining\n"
+            f"Closed LLM cooldown: {closed_remaining} steps remaining\n"
+        )
+
+        # Format LLM query information if available
+        llm_text = ""
+        if self.last_llm_query:
+            llm_type = self.last_llm_type if self.last_llm_type is not None else "N/A"
+            llm_conf = (
+                self.last_llm_confidence
+                if self.last_llm_confidence is not None
+                else "N/A"
+            )
+            llm_hint = self.last_llm_hint if self.last_llm_hint is not None else "N/A"
+            llm_accepted = "Yes" if self.last_llm_accepted else "No"
+            llm_text = (
+                f"Queried: {llm_type} model\n"
+                f"LLM output: {llm_hint}\n"
+                f"Confidence: {llm_conf}\n"
+                f"Accepted: {llm_accepted}\n"
+            )
+
+        # Combine text
+        full_text = (
+            dqn_conf
+            + "\n"
+            + current_hint_str
+            + "\n"
+            + cooldown_text
+            + (llm_text if self.last_llm_query else "")
+        )
+
+        # Add text to the panel
+        self.ax_llm.text(
+            0.05,
+            0.95,
+            full_text,
+            verticalalignment="top",
+            horizontalalignment="left",
+            transform=self.ax_llm.transAxes,
+            fontsize=10,
+            bbox=dict(facecolor="lightyellow", alpha=0.8),
         )
 
     def update_reward_plot(self):
@@ -297,12 +424,20 @@ class AgentSimulator:
         self.cumulative_shaped = []
         self.cumulative_actual = []
 
+        # Reset LLM query tracking
+        self.last_llm_query = None
+        self.last_llm_hint = None
+        self.last_llm_confidence = None
+        self.last_llm_accepted = None
+        self.last_llm_type = None
+
         # Get image
         img = obs["image"] if self.render_agent_view else self.env.get_frame()
         self.update_env_display(img)
 
         # Update info panel with initial state
         self.update_info_panel(obs, info, None, 0, 0)
+        self.update_llm_panel()
         self.update_reward_plot()
         plt.draw()
         plt.pause(0.001)
@@ -321,6 +456,58 @@ class AgentSimulator:
         """Take a step in the environment and update visualizations."""
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.agent.update_state(obs, info)
+
+        # DQN confidence
+        dqn_confidence = self.agent.confidence_score()
+
+        # Check if LLM was queried in this step (show info regardless of acceptance)
+        llm_queried = False
+        llm_type = None
+        llm_output = None
+        llm_conf = None
+        llm_accepted = False
+        # Detect if an LLM query was made (open or closed)
+        if (
+            hasattr(self.agent, "last_open")
+            and self.agent.last_open == self.agent.current_step
+        ):
+            llm_queried = True
+            llm_type = "Open"
+            llm_output = getattr(
+                self.agent, "last_open_hint", getattr(self.agent, "current_hint", None)
+            )
+            llm_conf = getattr(self.agent, "cur_open_confidence", None)
+            llm_accepted = getattr(self.agent, "current_hint", None) != getattr(
+                self, "prev_hint", None
+            )
+        elif (
+            hasattr(self.agent, "last_closed")
+            and self.agent.last_closed == self.agent.total_steps
+        ):
+            llm_queried = True
+            llm_type = "Closed"
+            llm_output = getattr(
+                self.agent,
+                "last_closed_hint",
+                getattr(self.agent, "current_hint", None),
+            )
+            llm_conf = getattr(self.agent, "cur_closed_confidence", None)
+            llm_accepted = getattr(self.agent, "current_hint", None) != getattr(
+                self, "prev_hint", None
+            )
+
+        # Format LLM confidence for display
+        llm_conf_display = f"{llm_conf:.4f}" if llm_conf is not None else "N/A"
+
+        if llm_queried:
+            self.last_llm_query = True
+            self.last_llm_type = llm_type
+            self.last_llm_hint = llm_output
+            self.last_llm_confidence = llm_conf_display
+            self.last_llm_accepted = llm_accepted
+        else:
+            self.last_llm_query = False
+        self.prev_hint = getattr(self.agent, "current_hint", None)
 
         # Calculate shaped reward using the updated method
         shaped_reward, actual_reward = self.agent.shaped_reward(reward, info)
@@ -343,9 +530,14 @@ class AgentSimulator:
         # Update visualization
         self.update_env_display(img)
         self.update_info_panel(obs, info, action, shaped_reward, actual_reward)
+        self.update_llm_panel(dqn_confidence=dqn_confidence)
         self.update_reward_plot()
         plt.draw()
         plt.pause(0.001)
+
+        # If a model was queried, pause for user to continue (regardless of acceptance)
+        if llm_queried:
+            self.wait_for_continue()
 
         return obs, shaped_reward, actual_reward, terminated, truncated, info
 
@@ -436,7 +628,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default=5,
+        default=3000,
         help='Path to the model or "best" for best model',
     )
     parser.add_argument(
@@ -451,7 +643,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--checkpoint",
         type=int,
-        default=16,
+        default=72,
         help="Checkpoint folder number (e.g., 13 for checkpoints13)",
     )
 
